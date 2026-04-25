@@ -1,0 +1,16 @@
+# Mengabaikan folder memori virtual environment
+venv/
+env/
+
+# Mengabaikan folder sampah atau cache dari Python
+__pycache__/
+*.pyc
+
+# SANGAT PENTING: Mengabaikan file rahasia
+.env
+
+# Mengabaikan file sistem operasi
+.DS_Store
+Thumbs.db
+
+password.txt

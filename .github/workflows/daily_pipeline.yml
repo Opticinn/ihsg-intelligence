@@ -1,0 +1,33 @@
+name: Daily IHSG Pipeline
+
+on:
+  schedule:
+    # Berjalan setiap Senin - Jumat jam 09:00 UTC (16:00 WIB)
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch: # Tombol manual agar kita bisa mengetesnya kapan saja
+
+jobs:
+  run-data-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip' # Mempercepat proses instalasi
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Jalankan Ingestion (Ambil Data)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m app.services.ingestion
+
+      - name: Jalankan Monitoring (Cek Kesehatan)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m app.services.monitoring

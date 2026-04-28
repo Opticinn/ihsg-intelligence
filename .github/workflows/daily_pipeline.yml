@@ -1,33 +1,89 @@
-name: Daily IHSG Pipeline
+name: Daily Pipeline — Ingest + Monitor + Retrain Check
 
 on:
   schedule:
-    # Berjalan setiap Senin - Jumat jam 09:00 UTC (16:00 WIB)
-    - cron: '0 9 * * 1-5'
-  workflow_dispatch: # Tombol manual agar kita bisa mengetesnya kapan saja
+    # Senin–Jumat jam 16:30 WIB (09:30 UTC) — 30 menit setelah pasar tutup
+    - cron: '30 9 * * 1-5'
+  workflow_dispatch:    # bisa dijalankan manual dari GitHub UI
 
 jobs:
-  run-data-pipeline:
+  # ─────────────────────────────────────────
+  # JOB 1: Ingestion data harian
+  # ─────────────────────────────────────────
+  ingest:
+    name: 📥 Data Ingestion
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Setup Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # Mempercepat proses instalasi
+          cache: 'pip'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Jalankan Ingestion (Ambil Data)
+      - name: Run ingestion pipeline
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m app.services.ingestion
 
-      - name: Jalankan Monitoring (Cek Kesehatan)
+  # ─────────────────────────────────────────
+  # JOB 2: Data Quality Monitoring (Evidently)
+  # ─────────────────────────────────────────
+  monitor:
+    name: 📊 Data Quality Check
+    runs-on: ubuntu-latest
+    needs: ingest    # jalankan setelah ingestion selesai
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run Evidently monitoring
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m app.services.monitoring
+
+  # ─────────────────────────────────────────
+  # JOB 3: Feature Engineering Check
+  # Hanya verifikasi fitur bisa dihitung — training tidak otomatis
+  # Training dilakukan manual via POST /ml/train
+  # ─────────────────────────────────────────
+  feature-check:
+    name: 🧮 Feature Engineering Verify
+    runs-on: ubuntu-latest
+    needs: ingest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Verify features build correctly
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -c "
+          from app.services.features import build_features
+          df = build_features('BBCA.JK')
+          if df is None:
+              print('WARNING: Feature build gagal untuk BBCA.JK')
+              exit(1)
+          print(f'OK: {len(df)} baris fitur siap | Kolom: {list(df.columns)}')
+          "

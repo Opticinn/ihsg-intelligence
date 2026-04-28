@@ -1,17 +1,90 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  db:
-    image: postgres:15-alpine
-    container_name: ihsg_db
-    environment:
-      POSTGRES_USER: user_admin
-      POSTGRES_PASSWORD: password_rahasia
-      POSTGRES_DB: ihsg_db
+
+  # ─────────────────────────────────────────────
+  # RABBITMQ — Task Queue Broker untuk Celery
+  # Menggantikan Redis sebagai broker Celery
+  # Redis tetap dipakai untuk CACHE prediksi
+  # ─────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ihsg_rabbitmq
     ports:
-      - "5433:5432"
+      - "5672:5672"      # AMQP port (Celery connect di sini)
+      - "15672:15672"    # Management UI → http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: ihsg_user
+      RABBITMQ_DEFAULT_PASS: ihsg_pass
+      RABBITMQ_DEFAULT_VHOST: ihsg_vhost
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # ZOOKEEPER — Required oleh Kafka
+  # ─────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: ihsg_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # KAFKA — Event Streaming Bus
+  # Topics: stock.events, stock.signals, stock.alerts
+  # ─────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ihsg_kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"      # Kafka broker port
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # KAFKA UI — Dashboard monitoring Kafka (gratis)
+  # http://localhost:8080
+  # ─────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: ihsg_kafka_ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ihsg-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
+  rabbitmq_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:

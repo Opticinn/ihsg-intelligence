@@ -14,3 +14,30 @@ __pycache__/
 Thumbs.db
 
 password.txt
+
+*.html
+
+mlruns/
+
+chroma_data/
+
+__pycache__/
+
+venv/
+
+env/
+
+.DS_Store
+Thumbs.db
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# Database & AI Data
+chroma_data/
+mlruns/
+*.sqlite3

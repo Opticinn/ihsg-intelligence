@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IHSG Intelligence Radar</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        .status-bar { padding: 10px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; background: #1e293b; border: 1px solid #334155; }
+        #status-dot { color: #f1f5f9; }
+        .log-box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; height: 400px; overflow-y: auto; }
+        .signal-card { background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px; margin-bottom: 10px; border-radius: 4px; animation: slideIn 0.3s ease-out; }
+        .BUY { border-left-color: #22c55e !important; }
+        .SELL { border-left-color: #ef4444 !important; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📡 Radar IHSG Intelligence</h1>
+        
+        <div class="status-bar">
+            <div>Server Status: <span id="status-text">Menghubungkan...</span></div>
+            <div id="status-dot">⚪</div>
+        </div>
+
+        <div class="log-box" id="log-box">
+            <div style="color: #94a3b8;">Menunggu sinyal real-time dari XGBoost...</div>
+        </div>
+    </div>
+
+    <script>
+        const statusText = document.getElementById('status-text');
+        const statusDot = document.getElementById('status-dot');
+        const logBox = document.getElementById('log-box');
+        
+        let ws;
+        let isFirstConnect = true;
+
+        function connect() {
+            // Gunakan port 8000 sesuai uvicorn
+            ws = new WebSocket("ws://" + window.location.host + "/ws/signals");
+
+            ws.onopen = () => {
+                statusText.innerText = "Online";
+                statusText.style.color = "#22c55e";
+                statusDot.innerText = "🟢";
+                console.log("Connected to WebSocket");
+                
+                // JIKA ini adalah koneksi ulang setelah server mati, RELOAD halaman
+                if (!isFirstConnect) {
+                    console.log("Server back online! Reloading...");
+                    location.reload();
+                }
+                isFirstConnect = false;
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const card = document.createElement('div');
+                card.className = `signal-card ${data.signal}`;
+                
+                const time = new Date().toLocaleTimeString();
+                card.innerHTML = `
+                    <div style="font-size: 0.8rem; color: #94a3b8;">${time}</div>
+                    <strong>${data.ticker}</strong>: 
+                    <span style="color: ${data.signal === 'BUY' ? '#22c55e' : '#ef4444'}">${data.signal}</span> 
+                    (Conf: ${(data.confidence * 100).toFixed(1)}%)
+                `;
+                
+                logBox.prepend(card);
+            };
+
+            ws.onclose = () => {
+                statusText.innerText = "Offline (Reconnecting...)";
+                statusText.style.color = "#ef4444";
+                statusDot.innerText = "🔴";
+                
+                // Coba hubungkan kembali setiap 2 detik
+                setTimeout(() => {
+                    connect();
+                }, 2000);
+            };
+
+            ws.onerror = (err) => {
+                ws.close();
+            };
+        }
+
+        // Jalankan koneksi pertama kali
+        connect();
+    </script>
+</body>
+</html>

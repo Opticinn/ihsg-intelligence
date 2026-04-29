@@ -67,7 +67,7 @@ def load_model() -> tuple:
     _cache["model"]        = payload["model"]
     _cache["feature_cols"] = payload["feature_cols"]
     _cache["run_id"]       = payload.get("run_id", "unknown")
-    _cache["accuracy"]     = payload.get("accuracy", 0)
+    _cache["accuracy"]     = payload.get("test_accuracy", payload.get("accuracy", 0))
 
     version = _cache["run_id"][:8]
     logger.info(

@@ -15,7 +15,7 @@ Thumbs.db
 
 password.txt
 
-*.html
+# *.html
 
 mlruns/
 
@@ -44,3 +44,5 @@ mlruns/
 chroma_db/
 mlruns/saved_models/
 mlruns/retrain_state.pkl
+
+reports/

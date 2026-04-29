@@ -1,14 +1,20 @@
+"""
+app/worker.py
+=============
+Celery Worker menggunakan Redis untuk antrean tugas asinkron.
+Dijalankan via terminal terpisah (menggunakan gevent untuk Windows).
+"""
+
 import os
 from celery import Celery
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Ambil URL Redis dari .env (Gunakan localhost jika tidak ada)
+# Ambil URL Redis dari .env (Otomatis membaca ?ssl_cert_reqs=CERT_NONE jika ada)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Inisialisasi Celery
-# Redis bertindak sebagai 'broker' (papan tugas) dan 'backend' (penyimpan hasil)
+# Inisialisasi Celery murni dengan Redis (Tanpa Kafka/RabbitMQ)
 celery_app = Celery(
     "ihsg_worker",
     broker=REDIS_URL,
@@ -28,13 +34,12 @@ celery_app.conf.update(
 @celery_app.task(bind=True, max_retries=3)
 def task_train_model(self):
     """
-    Tugas Celery untuk melatih ulang model XGBoost di background.
+    Melatih ulang model XGBoost di background.
     Tidak akan membuat API FastAPI menjadi lambat/hang.
     """
     try:
         from app.services.trainer import run_training
-        # Menjalankan fungsi training yang sudah kita buat sebelumnya
         result = run_training()
         return {"status": "success", "result": result}
     except Exception as e:
-        self.retry(countdown=60, exc=e) # Coba lagi dalam 60 detik jika gagal
+        self.retry(countdown=60, exc=e)

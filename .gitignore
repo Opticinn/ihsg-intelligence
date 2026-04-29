@@ -41,3 +41,6 @@ __pycache__/
 chroma_data/
 mlruns/
 *.sqlite3
+chroma_db/
+mlruns/saved_models/
+mlruns/retrain_state.pkl

@@ -22,6 +22,7 @@ import pandas as pd
 
 from app.core.database import SessionLocal
 from app.models.prediction import Prediction
+from app.models.stock import StockHistory
 from app.services.features import FEATURE_COLS, build_features
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,12 @@ def predict_ticker(ticker: str) -> dict:
 
     # ── 2. Siapkan input baris terakhir ──
     df["ticker_encoded"] = hash(ticker) % 100
+
+    # Ghost row sudah difilter di features.py & ingestion.py
+    # close_price tidak ada di df features (sudah dinormalisasi)
+    # Ambil langsung baris terakhir
     last_row = df.iloc[-1]
+    
 
     model, feature_cols, version = load_model()
 
@@ -118,8 +124,23 @@ def predict_ticker(ticker: str) -> dict:
     signal      = SIGNAL_MAP[pred_class]
     confidence  = float(round(pred_proba[pred_class], 4))
 
+    # Ambil close_price langsung dari DB (tidak ada di features df)
+    try:
+        db_temp = SessionLocal()
+        last_stock = (
+            db_temp.query(StockHistory)
+            .filter(StockHistory.ticker == ticker, StockHistory.close_price > 0)
+            .order_by(StockHistory.date.desc())
+            .first()
+        )
+        close_price = float(last_stock.close_price) if last_stock else 0.0
+        db_temp.close()
+    except Exception:
+        print(f"DEBUG close_price error: {e}")
+        close_price = 0.0
+
     features_snapshot = {
-        "close_price":  round(float(last_row.get("close_price", last_row.get("close", 0.0))), 2),
+        "close_price":  round(close_price, 2),
         "rsi":          round(float(last_row["rsi"]), 2),
         "macd_line":    round(float(last_row["macd_line"]), 4),
         "macd_hist":    round(float(last_row["macd_hist"]), 4),
@@ -217,5 +238,3 @@ def predict_all_tickers(tickers: list[str]) -> list[dict]:
             logger.warning(f"[predictor] Skip {ticker}: {e}")
             results.append({"ticker": ticker, "signal": "ERROR", "message": str(e)})
     return results
-
-

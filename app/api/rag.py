@@ -1,29 +1,20 @@
-"""
-app/api/rag.py
-==============
-Router FastAPI untuk semua endpoint RAG & Chat.
-
-Endpoints:
-  POST /rag/chat/ask              → Q&A RAG (main endpoint)
-  GET  /rag/chat/history/{sid}    → riwayat percakapan
-  DELETE /rag/chat/{sid}          → hapus session
-  POST /rag/ingest/{ticker}       → ingest dokumen satu ticker
-  POST /rag/ingest/batch          → ingest semua ticker
-  GET  /rag/stats                 → statistik ChromaDB
-  GET  /rag/health                → cek koneksi Ollama
-"""
-
 import logging
 from typing import Optional
-
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends # Tambah Depends
 from pydantic import BaseModel, Field
 from starlette.requests import Request
+from sqlalchemy.orm import Session # Tambah Session
+from sqlalchemy import desc
 
+
+
+# Core & Database
 from app.core.limiter import limiter
+from app.core.database import SessionLocal # Import SessionLocal kita
 from app.services.ingestion import IHSG_TICKERS
+
+# Services
 from app.services.rag_chat import (
     chat,
     delete_conversation,
@@ -35,42 +26,45 @@ from app.services.vector_store import (
     ingest_ticker,
 )
 
+# Models & Langchain
+from app.models.prediction import Prediction 
+
+
 router = APIRouter(prefix="/rag", tags=["RAG & Chat"])
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 
+# ─── DEPENDENCY DB ───
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# ─────────────────────────────────────────────
-# SCHEMAS
-# ─────────────────────────────────────────────
-
+# ─── SCHEMAS ───
 class ChatRequest(BaseModel):
-    question:   str             = Field(..., min_length=3, max_length=1000, description="Pertanyaan kamu")
-    session_id: Optional[str]  = Field(None, description="ID sesi untuk multi-turn. Kosongkan untuk sesi baru.")
-    ticker:     Optional[str]  = Field(None, description="Filter konteks ke satu ticker, e.g. 'BBCA'")
+    question:   str             = Field(..., min_length=3, max_length=1000)
+    session_id: Optional[str]   = Field(None)
+    ticker:     Optional[str]   = Field(None)
 
 class ChatResponse(BaseModel):
     answer:     str
     session_id: str
-    sources:    list
+    sources:     list
     ml_signal:  Optional[dict]
 
 class IngestRequest(BaseModel):
-    pdf_paths: Optional[list[str]] = Field(None, description="Path ke file PDF (opsional)")
+    pdf_paths: Optional[list[str]] = None
     max_news:  int                 = Field(5, ge=1, le=20)
 
 class BatchIngestRequest(BaseModel):
-    tickers:           Optional[list[str]] = None    # None = semua IHSG_TICKERS
-    max_news_per_ticker: int               = Field(3, ge=1, le=10)
+    tickers:             Optional[list[str]] = None
+    max_news_per_ticker: int                 = Field(3, ge=1, le=10)
 
-
-# ─────────────────────────────────────────────
-# BACKGROUND INGEST TRACKER
-# ─────────────────────────────────────────────
-
+# ─── BACKGROUND INGEST TRACKER ───
 _ingest_status = {"is_running": False, "last_result": None}
-
 
 def _run_batch_ingest(tickers: list[str], max_news: int):
     global _ingest_status
@@ -84,32 +78,11 @@ def _run_batch_ingest(tickers: list[str], max_news: int):
         _ingest_status["is_running"] = False
 
 
-# ─────────────────────────────────────────────
-# ENDPOINTS
-# ─────────────────────────────────────────────
+# ─── ENDPOINTS ───
 
-@router.post(
-    "/chat/ask",
-    response_model=ChatResponse,
-    summary="Tanya AI Analyst tentang saham IHSG",
-)
+@router.post("/chat/ask", response_model=ChatResponse)
 @limiter.limit("20/minute")
 async def ask_chat(request: Request, body: ChatRequest):
-    """
-    **Endpoint utama RAG Chat.**
-
-    Cara pakai:
-    - **Pertama kali:** Kirim `question` saja, `session_id` akan dibuat otomatis.
-    - **Multi-turn:** Gunakan `session_id` dari response sebelumnya untuk melanjutkan percakapan.
-    - **Filter ticker:** Isi `ticker` untuk fokuskan konteks ke satu saham.
-
-    Contoh pertanyaan:
-    - "Bagaimana prospek BBCA berdasarkan berita terbaru?"
-    - "Apa yang dimaksud RSI overbought?"
-    - "Bandingkan BBCA dan BMRI dari sisi teknikal"
-
-    ⚠️ Pastikan Ollama berjalan di background: `ollama serve`
-    """
     try:
         result = chat(
             question   = body.question,
@@ -117,65 +90,58 @@ async def ask_chat(request: Request, body: ChatRequest):
             ticker     = body.ticker,
         )
         return ChatResponse(**result)
-    except ConnectionError:
-        raise HTTPException(
-            status_code=503,
-            detail="Ollama tidak bisa dihubungi. Pastikan Ollama berjalan: 'ollama serve'",
-        )
     except Exception as e:
-        logger.error(f"[rag_api] chat error: {e}", exc_info=True)
+        logger.error(f"[rag_api] chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.get(
-    "/chat/history/{session_id}",
-    summary="Riwayat percakapan satu sesi",
-)
-async def get_history(session_id: str):
-    """Ambil seluruh riwayat percakapan berdasarkan session_id."""
-    result = get_conversation_history(session_id)
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    return result
-
-
-@router.delete(
-    "/chat/{session_id}",
-    summary="Hapus sesi percakapan",
-)
-async def delete_session(session_id: str):
-    """Hapus satu sesi beserta semua riwayat pesannya."""
-    success = delete_conversation(session_id)
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Session '{session_id}' tidak ditemukan.")
-    return {"status": "deleted", "session_id": session_id}
-
-
-@router.post(
-    "/ingest/{ticker}",
-    summary="Ingest dokumen untuk satu ticker",
-)
+@router.post("/ingest/{ticker}", summary="Ingest dokumen + Hasil ML")
 @limiter.limit("10/hour")
-async def ingest_one(request: Request, ticker: str, body: IngestRequest = IngestRequest()):
-    """
-    Scrape berita + parse PDF untuk satu ticker dan simpan ke ChromaDB.
-
-    Proses ini membutuhkan ~30–60 detik tergantung jumlah berita.
-    """
+async def ingest_one(
+    request: Request, 
+    ticker: str, 
+    body: IngestRequest = IngestRequest(),
+    db: Session = Depends(get_db) # KUNCI: Menambahkan akses database
+):
     ticker = ticker.upper()
+    if not ticker.endswith(".JK"):
+        ticker = f"{ticker}.JK"
+
     try:
+        # 1. AMBIL PREDIKSI TERBARU DARI POSTGRESQL
+        last_pred = db.query(Prediction).filter(
+            Prediction.ticker == ticker
+        ).order_by(desc(Prediction.created_at)).first()
+
+        ml_text = ""
+        if last_pred:
+            ml_text = (
+                f"HASIL ANALISIS MACHINE LEARNING TERBARU:\n"
+                f"Ticker: {ticker}\n"
+                f"Sinyal Trading: {last_pred.signal}\n"
+                f"Confidence Score: {last_pred.confidence * 100:.2f}%\n"
+                f"Waktu Prediksi: {last_pred.created_at}\n"
+            )
+            logger.info(f"✅ Menemukan data ML untuk {ticker}, siap di-ingest.")
+
+        # 2. JALANKAN INGEST (Kirim ml_text ke service)
+        # Pastikan fungsi ingest_ticker di app/services/vector_store.py 
+        # bisa menerima parameter tambahan 'extra_text' jika ada.
         n_chunks = ingest_ticker(
-            ticker     = ticker,
-            pdf_paths  = body.pdf_paths,
-            max_news   = body.max_news,
+            ticker    = ticker,
+            pdf_paths = body.pdf_paths,
+            max_news  = body.max_news,
+            extra_text = ml_text # Kita titipkan hasil ML di sini
         )
+
         return {
             "status":  "success",
             "ticker":  ticker,
             "chunks_ingested": n_chunks,
-            "message": f"{n_chunks} chunks berhasil disimpan ke ChromaDB untuk {ticker}.",
+            "has_ml_data": last_pred is not None,
+            "message": f"Data {ticker} (termasuk hasil ML) berhasil disimpan ke ChromaDB."
         }
     except Exception as e:
+        logger.error(f"Error saat ingest {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -180,6 +180,19 @@ def build_features(ticker: str, period: str = "1y") -> pd.DataFrame | None:
         "volume":      float(r.volume),
     } for r in rows]).sort_values("date").reset_index(drop=True)
 
+    # ── GHOST ROW FIX ──
+    # Hapus ghost row yang mungkin lolos masuk DB sebelum fix diterapkan.
+    before = len(df)
+    df = df[
+        (df["close_price"] > 0) &
+        (df["close_price"].notna()) &
+        (df["open_price"]  > 0) &
+        (df["volume"]      > 0)
+    ].copy().reset_index(drop=True)
+    if len(df) < before:
+        logger.warning(f"[features] {ticker}: {before - len(df)} ghost row dihapus dari DB data.")
+    # ── END GHOST ROW FIX ──
+
     if len(df) < MIN_ROWS:
         logger.warning(f"[features] {ticker}: {len(df)} baris < {MIN_ROWS}. Skip.")
         return None

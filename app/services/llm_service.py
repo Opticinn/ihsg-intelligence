@@ -1,65 +1,115 @@
 """
 app/services/llm_service.py
-===========================
-Layanan untuk menggabungkan data ML dengan AI Generatif (Llama 3.2).
+============================
+Layanan AI Analyst — menggabungkan data ML dengan Llama 3.2.
+Output dirancang untuk orang awam, bukan trader profesional.
 """
 
+import logging
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 from app.services.predictor import predict_ticker
 
-# 1. Inisialisasi Llama 3.2
-# Tambahkan temperature=0.3 agar jawaban AI lebih logis dan tidak terlalu berhalusinasi
+logger = logging.getLogger(__name__)
+
 llm = OllamaLLM(model="llama3.2", temperature=0.3)
 
-# 2. Skenario Prompt (Diperkaya dengan "Cheat Sheet" teori)
+# ─────────────────────────────────────────────
+# PROMPT — dirancang untuk output natural, bukan bocor instruksi
+# ─────────────────────────────────────────────
+
 prompt_template = PromptTemplate.from_template(
-    """Kamu adalah analis saham profesional dari Indonesia yang cerdas. 
-    Tugasmu adalah menganalisis saham berdasarkan data teknikal dan prediksi Machine Learning (XGBoost) di bawah ini.
+"""Kamu adalah Andi, asisten investasi saham yang ramah dan bicara seperti teman.
+Kamu menjelaskan saham dengan bahasa yang mudah dipahami orang yang belum ahli investasi.
 
-    [DATA SAHAM]
-    - Ticker: {ticker}
-    - Harga Terakhir: Rp {close_price}
-    - Sinyal Machine Learning: {signal} (Tingkat Keyakinan: {confidence})
-    - RSI (Momentum): {rsi}
-    - MACD Histogram (Tren): {macd}
+Data saham {ticker} hari ini:
+- Harga saat ini: Rp {close_price:,}
+- Sinyal AI: {signal} (keyakinan model: {confidence})
+- RSI: {rsi:.1f} {rsi_label}
+- MACD: {macd_label}
 
-    [PANDUAN TEORI UNTUKMU]
-    - Sinyal XGBoost BUY berarti algoritma memprediksi harga akan naik 3 hari ke depan.
-    - RSI < 30 berarti saham sedang Oversold (murah/jenuh jual). RSI > 70 berarti Overbought (mahal). RSI 30-70 adalah netral.
-    - MACD Histogram positif berarti momentum sedang naik (Bullish). MACD negatif berarti momentum turun (Bearish).
+Tulis analisis singkat dalam 3 bagian — gunakan bahasa sehari-hari, hindari jargon teknikal:
 
-    Instruksi:
-    1. Berikan analisis 2 paragraf saja mengenai perpaduan angka-angka di atas.
-    2. Berikan kesimpulan akhir yang tegas: (BELI, JUAL, atau PANTAU DULU).
-    
-    Jawablah dengan gaya bahasa yang profesional namun mudah dipahami.
-    """
+1. KONDISI SEKARANG (1-2 kalimat): Jelaskan kondisi saham ini seperti menjelaskan ke teman.
+2. APA YANG DIKATAKAN AI (1-2 kalimat): Jelaskan sinyal {signal} dengan kata-kata sederhana, sebutkan tingkat keyakinannya.
+3. SARAN (1 kalimat): Berikan saran praktis yang netral. Selalu ingatkan bahwa ini bukan nasihat investasi resmi.
+
+PENTING: Tulis langsung isinya saja. Jangan tulis "1.", "2.", "3." — tulis mengalir seperti orang ngobrol."""
 )
 
+
+def _interpret_rsi(rsi: float) -> str:
+    """Terjemahkan nilai RSI ke bahasa manusia."""
+    if rsi < 30:
+        return "(harga sudah cukup murah, banyak yang mau beli)"
+    elif rsi < 50:
+        return "(momentum sedang melemah)"
+    elif rsi < 70:
+        return "(kondisi normal)"
+    else:
+        return "(harga sudah cukup mahal, banyak yang mau jual)"
+
+
+def _interpret_macd(macd_hist: float) -> str:
+    """Terjemahkan MACD histogram ke bahasa manusia."""
+    if macd_hist > 0.5:
+        return "menunjukkan tren sedang menguat"
+    elif macd_hist > 0:
+        return "menunjukkan tren mulai membaik"
+    elif macd_hist > -0.5:
+        return "menunjukkan tren mulai melemah"
+    else:
+        return "menunjukkan tren sedang melemah"
+
+
+def _interpret_signal(signal: str, confidence: float) -> str:
+    """Format signal + confidence jadi bahasa manusia."""
+    conf_pct = f"{confidence:.0%}"
+    if signal == "BUY":
+        return f"BUY — AI memprediksi harga berpotensi naik (keyakinan {conf_pct})"
+    elif signal == "SELL":
+        return f"SELL — AI memprediksi harga berpotensi turun (keyakinan {conf_pct})"
+    else:
+        return f"HOLD — AI memprediksi harga relatif flat (keyakinan {conf_pct})"
+
+
 def generate_stock_analysis(ticker: str) -> str:
-    """Mengambil data prediksi ML lalu menyuruh Llama membuat analisis teks."""
+    """
+    Ambil data prediksi ML, lalu minta Llama buat analisis
+    yang mudah dipahami orang awam.
+    """
     try:
-        # Panggil fungsi XGBoost (Ini akan mengambil data dari Redis jika ada!)
-        ml_data = predict_ticker(ticker)
+        ml_data  = predict_ticker(ticker)
         features = ml_data["features"]
 
-        # Perbaikan ambil harga (Bisa close_price atau close)
-        harga_terakhir = features.get("close_price", features.get("close", 0))
+        close_price = features.get("close_price", 0)
+        rsi         = features.get("rsi", 50)
+        macd_hist   = features.get("macd_hist", 0)
+        signal      = ml_data["signal"]
+        confidence  = ml_data["confidence"]
 
-        # Gabungkan data ke dalam templat
         prompt_text = prompt_template.format(
-            ticker=ml_data["ticker"],
-            signal=ml_data["signal"],
-            confidence=ml_data["confidence_pct"],
-            close_price=harga_terakhir,
-            rsi=features.get("rsi", 0),
-            macd=features.get("macd_hist", 0)
+            ticker      = ml_data["ticker"],
+            close_price = int(close_price),
+            signal      = _interpret_signal(signal, confidence),
+            confidence  = f"{confidence:.0%}",
+            rsi         = rsi,
+            rsi_label   = _interpret_rsi(rsi),
+            macd_label  = _interpret_macd(macd_hist),
         )
 
-        # Minta Llama menganalisis
-        analisis = llm.invoke(prompt_text)
+        analisis = llm.invoke(prompt_text).strip()
+
+        # Bersihkan kalau ada sisa format aneh
+        analisis = analisis.replace("1. KONDISI SEKARANG:", "").strip()
+        analisis = analisis.replace("2. APA YANG DIKATAKAN AI:", "\n\n").strip()
+        analisis = analisis.replace("3. SARAN:", "\n\n").strip()
 
         return analisis
+
     except Exception as e:
-        return f"Maaf, sistem AI gagal menganalisis saham {ticker}. Error: {str(e)}"
+        logger.error(f"[llm_service] Error analisis {ticker}: {e}")
+        return (
+            f"Maaf, sistem AI sedang tidak bisa menganalisis {ticker} saat ini. "
+            f"Coba beberapa saat lagi."
+        )

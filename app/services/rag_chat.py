@@ -1,4 +1,4 @@
-"""
+﻿"""
 app/services/rag_chat.py
 ========================
 RAG Chat Engine — otak dari sistem tanya-jawab saham.
@@ -13,12 +13,15 @@ Alur per request:
   7. Simpan pasangan (user_msg, assistant_msg) ke PostgreSQL
   8. Return jawaban + sumber dokumen
 """
-
+from app.services.ingestion import IHSG_TICKERS
 import json
 import logging
 import uuid
 from datetime import datetime
 from typing import Optional
+
+from app.models.prediction import Prediction
+from sqlalchemy import desc
 
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
@@ -38,7 +41,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_BASE_URL  = "http://localhost:11434"
 OLLAMA_MODEL     = "llama3.2"
 TEMPERATURE      = 0.3
-MAX_HISTORY_MSGS = 6    # jumlah pesan history yang dimasukkan ke prompt
+MAX_HISTORY_MSGS = 0    # jumlah pesan history yang dimasukkan ke prompt
 MAX_CONTEXT_DOCS = 4    # jumlah chunk ChromaDB per query
 
 
@@ -61,45 +64,127 @@ def _get_llm() -> OllamaLLM:
         logger.info("[rag_chat] Ollama siap.")
     return _llm
 
+VALID_TICKERS = [t.replace(".JK", "") for t in IHSG_TICKERS]
+TICKER_LIST   = ", ".join(VALID_TICKERS)
+
 
 # ─────────────────────────────────────────────
 # PROMPT TEMPLATE
 # ─────────────────────────────────────────────
 
-RAG_PROMPT = PromptTemplate(
-    input_variables=["history", "context_docs", "ml_context", "question"],
-    template="""Kamu adalah IHSG AI Analyst — asisten analisis saham Bursa Efek Indonesia yang cerdas, akurat, dan berbicara dalam Bahasa Indonesia.
+def _build_prompt() -> PromptTemplate:
+    today = datetime.now().strftime("%d %B %Y")
+    return PromptTemplate(
+        input_variables=["history", "context_docs", "ml_context", "question"],
+        template=f"""Kamu adalah Andi, asisten analisis saham Indonesia yang jujur dan tidak mengarang data.
+Hari ini: {today}.
 
-PANDUAN PENTING:
-- Jawab HANYA berdasarkan informasi yang tersedia di bawah ini (Konteks Dokumen & Data ML).
-- Jika informasi tidak cukup, katakan "Saya tidak memiliki data yang cukup untuk menjawab ini."
-- Jangan membuat angka atau fakta yang tidak ada di konteks.
-- Selalu akhiri jawaban dengan disclaimer singkat tentang risiko investasi.
+SAHAM YANG KAMU DUKUNG (HANYA INI):
+{TICKER_LIST}
 
-TEORI INDIKATOR (gunakan sebagai referensi interpretasi):
-- RSI > 70 = Overbought (harga mungkin sudah terlalu tinggi, potensi koreksi)
-- RSI < 30 = Oversold (harga mungkin sudah terlalu rendah, potensi rebound)
-- RSI 30-70 = Netral
-- MACD Histogram positif = Momentum bullish (harga cenderung naik)
-- MACD Histogram negatif = Momentum bearish (harga cenderung turun)
-- Bollinger Band %B > 1 = Harga di atas upper band (overbought area)
-- Bollinger Band %B < 0 = Harga di bawah lower band (oversold area)
-- Volume Ratio > 2x = Ada aktivitas beli/jual yang tidak biasa
+ATURAN WAJIB — JANGAN DILANGGAR:
+1. JANGAN pernah mengarang sinyal, RSI, MACD, atau harga jika DATA SAHAM kosong.
+2. Semua analisis merujuk kondisi HARI INI, {today}.
+3. Sinyal SELL = prediksi TURUN (jangan sebut "siap naik"). Sinyal BUY = prediksi NAIK.
+4. RSI < 30 = oversold (harga murah, potensi naik). RSI 30-70 = netral. RSI > 70 = overbought.
+5. Tulis SATU kalimat pengingat risiko di akhir — tidak diulang.
+7. Jawab pertanyaan user SECARA LANGSUNG. Jika user tanya, 
+   berikan pendapat berdasarkan sinyal AI dan data — jangan bilang "saya tidak bisa memberikan rekomendasi".
+8. Jangan ulangi kalimat yang sama. Maksimal 3 paragraf pendek.
 
-RIWAYAT PERCAKAPAN:
-{history}
+RIWAYAT CHAT SEBELUMNYA:
+{{history}}
 
-KONTEKS DOKUMEN (berita & laporan keuangan terbaru):
-{context_docs}
+BERITA & ANALISIS TERKAIT (hari ini, {today}):
+{{context_docs}}
 
-DATA ML & TEKNIKAL TERKINI:
-{ml_context}
+DATA SAHAM HARI INI ({today}):
+{{ml_context}}
 
 PERTANYAAN USER:
-{question}
+{{question}}
 
-JAWABAN (dalam Bahasa Indonesia, terstruktur dan mudah dipahami):"""
-)
+Jawab 2-3 paragraf pendek, jelaskan dengan bahasa Indonesia yang mudah dipahami oleh orang awam dan berikan jawaban akhirnya. Hanya berdasarkan data di atas."""
+    )
+
+ 
+ 
+# ══════════════════════════════════════════════════
+# BAGIAN 2: Ganti _get_ml_context
+# ══════════════════════════════════════════════════
+ 
+def _get_ml_context(ticker, db) -> str:
+    """Versi baru — output human-friendly, signal jelas terbaca."""
+    import json
+    from app.models.prediction import Prediction
+ 
+    if not ticker:
+        return "Tidak ada data saham spesifik."
+ 
+    ticker_clean = ticker.replace(".JK", "").upper() + ".JK"
+    pred = (
+        db.query(Prediction)
+        .filter(Prediction.ticker == ticker_clean)
+        .order_by(Prediction.created_at.desc())
+        .first()
+    )
+ 
+    if not pred:
+        return f"Belum ada data prediksi untuk {ticker_clean}. Coba akses /ml/predict/{ticker} dulu."
+ 
+    try:
+        features = json.loads(pred.features_snapshot) if pred.features_snapshot else {}
+    except Exception:
+        features = {}
+ 
+    rsi       = features.get("rsi", 50)
+    macd_hist = features.get("macd_hist", 0)
+    vol_ratio = features.get("volume_ratio", 1)
+    close     = features.get("close_price", 0)
+    ret_1d    = features.get("return_1d", 0)
+ 
+    # Terjemahkan RSI
+    if rsi < 30:
+        rsi_desc = f"RSI {rsi:.1f} — harga sudah cukup murah, berpotensi rebound"
+    elif rsi > 70:
+        rsi_desc = f"RSI {rsi:.1f} — harga sudah cukup mahal, ada risiko koreksi"
+    else:
+        rsi_desc = f"RSI {rsi:.1f} — kondisi normal"
+ 
+    # Terjemahkan MACD
+    macd_desc = (
+        f"Momentum sedang menguat" if macd_hist > 0
+        else f"Momentum sedang melemah"
+    )
+ 
+    # Terjemahkan volume
+    if vol_ratio > 2:
+        vol_desc = f"Ada lonjakan transaksi ({vol_ratio:.1f}x dari biasanya)"
+    elif vol_ratio < 0.5:
+        vol_desc = f"Transaksi sedang sepi ({vol_ratio:.1f}x dari biasanya)"
+    else:
+        vol_desc = f"Volume transaksi normal ({vol_ratio:.1f}x rata-rata)"
+ 
+    # Signal dengan wording yang jelas
+    signal_wording = {
+        "BUY":  f"BELI — AI memprediksi harga {ticker_clean} berpotensi NAIK dalam 1-3 hari ke depan",
+        "SELL": f"JUAL — AI memprediksi harga {ticker_clean} berpotensi TURUN dalam 1-3 hari ke depan",
+        "HOLD": f"TAHAN — AI memprediksi harga {ticker_clean} relatif flat dalam 1-3 hari ke depan",
+    }
+ 
+    return f"""Ticker: {ticker_clean}
+Harga saat ini: Rp {close:,.0f}
+Perubahan kemarin: {ret_1d*100:+.2f}%
+ 
+SINYAL AI: {signal_wording.get(pred.signal, pred.signal)}
+Tingkat keyakinan model: {pred.confidence:.0%}
+ 
+Kondisi teknikal (untuk referensi):
+- {rsi_desc}
+- {macd_desc}
+- {vol_desc}"""
+
+
 
 
 # ─────────────────────────────────────────────
@@ -149,39 +234,12 @@ def _get_history_text(conv: Conversation, db: Session, max_msgs: int = MAX_HISTO
     return "\n".join(history_lines)
 
 
-def _get_ml_context(ticker: Optional[str], db: Session) -> str:
-    """Ambil prediksi ML terbaru untuk ticker dari DB."""
+def _ml_context(ticker: Optional[str], db: Session) -> str:
+    "bil prediksi ML terbaru untuk ticker dari DB."""
     if not ticker:
         return "Tidak ada data ML spesifik untuk query ini."
 
-    ticker_clean = ticker.replace(".JK", "").upper() + ".JK"
-    pred = (
-        db.query(Prediction)
-        .filter(Prediction.ticker == ticker_clean)
-        .order_by(Prediction.created_at.desc())
-        .first()
-    )
-
-    if not pred:
-        return f"Belum ada data prediksi ML untuk {ticker_clean}. Jalankan /ml/predict/{ticker} terlebih dahulu."
-
-    try:
-        features = json.loads(pred.features_snapshot) if pred.features_snapshot else {}
-    except Exception:
-        features = {}
-
-    lines = [
-        f"Ticker: {pred.ticker}",
-        f"Signal ML: {pred.signal} (Confidence: {pred.confidence:.1%})",
-        f"Harga terakhir: Rp {features.get('close_price', 'N/A'):,}",
-        f"RSI: {features.get('rsi', 'N/A')}",
-        f"MACD Histogram: {features.get('macd_hist', 'N/A')}",
-        f"Bollinger %B: {features.get('bb_pct_b', 'N/A')}",
-        f"Volume Ratio: {features.get('volume_ratio', 'N/A')}x",
-        f"Return 1 hari: {float(features.get('return_1d', 0))*100:.2f}%",
-        f"Prediksi dibuat: {pred.created_at.strftime('%d %b %Y %H:%M') if pred.created_at else 'N/A'}",
-    ]
-    return "\n".join(lines)
+    # 1. Standarisa.join(lines)
 
 
 def _save_messages(conv: Conversation, db: Session, user_msg: str, assistant_msg: str, sources: list) -> None:
@@ -211,50 +269,115 @@ def chat(
     session_id: Optional[str] = None,
     ticker:     Optional[str] = None,
 ) -> dict:
-    """
-    Proses satu pertanyaan user dengan full RAG pipeline.
-
-    Args:
-        question:   pertanyaan user, e.g. "Bagaimana prospek BBCA bulan ini?"
-        session_id: ID sesi untuk multi-turn (None = buat sesi baru)
-        ticker:     filter konteks ke satu ticker (opsional)
-
-    Returns:
-        dict: answer, session_id, sources, ml_signal
-    """
     logger.info(f"[rag_chat] Question: '{question[:60]}...' | session={session_id} | ticker={ticker}")
 
-    # ── 1. Get/create session ──
+    # ── 0. AUTO-DETECT TICKER ──
+    if not ticker:
+        from app.services.ingestion import IHSG_TICKERS
+        for t in IHSG_TICKERS:
+            if t.replace(".JK", "").lower() in question.lower():
+                ticker = t
+                logger.info(f"🔍 [Auto-Detect] Menemukan ticker {ticker}")
+                break
+
+    # ── 1. VALIDASI TICKER ──
+    if ticker:
+        ticker_clean_check = ticker.replace(".JK", "").upper()
+        if ticker_clean_check not in VALID_TICKERS:
+            return {
+                "answer": f"Maaf, saham **{ticker_clean_check}** tidak ada dalam daftar kami.\n\nSaham yang tersedia: {TICKER_LIST}",
+                "session_id": session_id or "invalid",
+                "sources": [],
+                "ml_signal": None,
+            }
+
+    # ── 2. GET/CREATE SESSION ──
     conv, db = _get_or_create_session(session_id, ticker)
+    # ... sisa kode lama ...
+    
+    if ticker and conv.ticker != ticker:
+        conv.ticker = ticker
+        db.commit()
 
     try:
         # ── 2. History percakapan ──
         history_text = _get_history_text(conv, db)
+        
+        # ── AUTO-TRIGGER: predict + ingest kalau belum ada data ──
+        if ticker:
+            ticker_jk = ticker.replace(".JK", "").upper() + ".JK"
+            
+            # Cek apakah sudah ada prediksi ML
+            from datetime import datetime, timedelta
+            today = datetime.utcnow() - timedelta(hours=12)
+            pred_exists = db.query(Prediction)\
+                .filter(
+                    Prediction.ticker == ticker_jk,
+                    Prediction.created_at >= today
+                ).first()
+            
+            if not pred_exists:
+                logger.info(f"[rag_chat] Auto-predict {ticker_jk}...")
+                try:
+                    from app.services.predictor import predict_ticker
+                    predict_ticker(ticker_jk)
+                except Exception as e:
+                    logger.warning(f"[rag_chat] Auto-predict gagal: {e}")
+
+            # Cek apakah sudah ada chunks di ChromaDB untuk ticker ini
+            from app.services.vector_store import get_collection_stats, ingest_ticker
+            stats = get_collection_stats()
+            ticker_clean = ticker.replace(".JK", "").upper()
+            
+            from app.services.vector_store import _get_collection
+            col      = _get_collection()
+            existing = col.get(limit=200, include=["metadatas"])
+            has_external = any(
+                m.get("ticker") == ticker_clean and 
+                m.get("source", "").startswith("http")
+                for m in existing.get("metadatas", [])
+            )
+
+            if not has_external:
+                logger.info(f"[rag_chat] Auto-ingest {ticker_clean}...")
+                try:
+                    ingest_ticker(ticker_clean, max_news=3)
+                    import time; time.sleep(1)  # tunggu ChromaDB selesai index
+                    logger.info(f"[rag_chat] Auto-ingest {ticker_clean} selesai.")
+                except Exception as e:
+                    logger.warning(f"[rag_chat] Auto-ingest gagal: {e}")
+        # ── END AUTO-TRIGGER ──
 
         # ── 3. Retrieve dari ChromaDB ──
+        # Gunakan ticker yang sudah terdeteksi (BBCA.JK -> BBCA)
         ticker_filter = ticker.replace(".JK", "").upper() if ticker else None
+        
         chunks = retrieve_context(
             query    = question,
             ticker   = ticker_filter,
-            top_k    = MAX_CONTEXT_DOCS,
+            top_k    = 6,
         )
+        
+        external = [c for c in chunks if c.get("source", "").startswith("http")]
+        internal = [c for c in chunks if not c.get("source", "").startswith("http")]
+        chunks   = external[:3] + internal[:2]  # max 3 external + 2 internal
 
         if chunks:
             context_text = "\n\n---\n".join([
-                f"[Sumber: {c['title'] or c['source']} | {c['date']}]\n{c['content']}"
+                f"[Sumber: {c.get('title') or c.get('source')} | {c.get('date')}]\n{c['content']}"
                 for c in chunks
             ])
         else:
-            context_text = (
-                "Tidak ada dokumen yang relevan ditemukan di database. "
-                "Jawaban akan berdasarkan data ML dan pengetahuan umum."
-            )
+            context_text = "Tidak ada dokumen berita spesifik. Fokus pada data ML."
 
-        # ── 4. ML context ──
+        # ── 4. ML context (Sekarang sudah punya ticker!) ──
         ml_context = _get_ml_context(ticker, db)
+        
+        # Log untuk debugging (Cek di terminal nanti!)
+        logger.info(f"📊 [ML Context Content]: {ml_context[:100]}...")
 
         # ── 5. Build prompt ──
-        prompt = RAG_PROMPT.format(
+        prompt = _build_prompt().format(
             history      = history_text,
             context_docs = context_text,
             ml_context   = ml_context,
@@ -266,27 +389,23 @@ def chat(
         answer = llm.invoke(prompt)
         answer = answer.strip()
 
-        # ── 7. Siapkan sumber dokumen untuk response ──
+        # ── 7. Siapkan sumber ──
         sources = [
             {
                 "title":    c.get("title", ""),
                 "source":   c.get("source", ""),
                 "ticker":   c.get("ticker", ""),
                 "doc_type": c.get("doc_type", ""),
-                "score":    c.get("score", 0),
             }
             for c in chunks
         ]
 
-        # ── 8. Simpan ke DB ──
+        # ── 8. Simpan & Return ──
         _save_messages(conv, db, question, answer, sources)
-
-        logger.info(f"[rag_chat] Answer generated ({len(answer)} chars) | {len(sources)} sources")
-
         return {
             "answer":     answer,
             "session_id": conv.session_id,
-            "sources":    sources,
+            "sources":     sources,
             "ml_signal":  _extract_ml_signal(ticker, db),
         }
 

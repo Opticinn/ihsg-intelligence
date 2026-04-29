@@ -139,17 +139,50 @@ def ingest_documents(docs: list[Document]) -> int:
     return len(texts)
 
 
+# Lokasi: app/services/vector_store.py
+
 def ingest_ticker(
     ticker: str,
     pdf_paths: list[str] = None,
     max_news: int = 5,
+    extra_text: str = "",
 ) -> int:
     """
-    Load + embed + simpan semua dokumen untuk satu ticker.
-    Shortcut: load_all_documents → ingest_documents.
+    Load dokumen dari semua sumber (TradingView, Google News, DB)
+    lalu embed dan simpan ke ChromaDB.
     """
-    docs = load_all_documents(ticker, pdf_paths=pdf_paths, max_news=max_news)
-    return ingest_documents(docs)
+    from app.services.document_loader import load_all_documents, Document
+
+    ticker_clean = ticker.replace(".JK", "").upper()
+    all_docs = []
+
+    # 1. Load dari sumber eksternal (TradingView Ideas + Google News)
+    external_docs = load_all_documents(
+        ticker    = ticker_clean,
+        pdf_paths = pdf_paths,
+        max_news  = max_news,
+    )
+    all_docs.extend(external_docs)
+
+    # 2. Tambahkan extra_text (ML context) kalau ada
+    if extra_text:
+        all_docs.append(Document(
+            content  = extra_text,
+            source   = f"ml://xgboost/{ticker_clean}",
+            ticker   = ticker_clean,
+            doc_type = "ml_analysis",
+            title    = f"Sinyal XGBoost AI {ticker_clean}",
+            date     = "",
+        ))
+
+    if not all_docs:
+        logger.warning(f"[vector_store] Tidak ada dokumen untuk {ticker_clean}")
+        return 0
+
+    n = ingest_documents(all_docs)
+    logger.info(f"[vector_store] ingest_ticker {ticker_clean}: {n} chunks")
+    return n
+    
 
 
 def ingest_all_tickers(

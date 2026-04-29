@@ -1,23 +1,16 @@
 """
-app/services/document_loader.py  (v2 — RSS-based, reliable)
-=============================================================
-Menggunakan RSS Feed resmi — jauh lebih reliable dari scraping HTML
-karena RSS memang dibuat untuk dibaca programatically.
-
-Sources:
-  1. Kontan Investasi RSS  → https://investasi.kontan.co.id/rss
-  2. Kontan.co.id RSS      → https://www.kontan.co.id/rss/investasi
-  3. CNBC Indonesia RSS    → https://www.cnbcindonesia.com/RSS (market)
-  4. Yahoo Finance RSS     → search berita per ticker (gratis)
-  5. PDF parser            → PyMuPDF untuk laporan keuangan
-
-Install tambahan:
-  pip install feedparser
+app/services/document_loader.py  (v4 — TradingView Ideas + Google News)
+=========================================================================
+Sumber data untuk RAG:
+  1. TradingView Ideas  — analisis teknikal komunitas trader IDX
+  2. Google News RSS    — berita terbaru per ticker
+  3. Yahoo Finance RSS  — backup
+  4. PDF parser         — laporan keuangan lokal
 """
 
 import logging
 import re
-import time
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -34,29 +27,37 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
 }
 
 CHUNK_SIZE    = 400
 CHUNK_OVERLAP = 80
 
-# ─── RSS FEEDS ───────────────────────────────
-RSS_FEEDS = {
-    "kontan_investasi": "https://investasi.kontan.co.id/rss",
-    "kontan_main":      "https://www.kontan.co.id/rss/investasi",
-    "cnbc_market":      "https://www.cnbcindonesia.com/RSS/pasar-modal.xml",
-    "cnbc_news":        "https://www.cnbcindonesia.com/RSS/news.xml",
+COMPANY_NAMES = {
+    "BBCA": "Bank Central Asia BBCA saham",
+    "BBRI": "Bank Rakyat Indonesia BBRI saham",
+    "BMRI": "Bank Mandiri BMRI saham",
+    "BBNI": "Bank Negara Indonesia BBNI saham",
+    "ARTO": "Bank Jago ARTO saham",
+    "TLKM": "Telkom Indonesia TLKM saham",
+    "GOTO": "GoTo Gojek Tokopedia GOTO saham",
+    "BUKA": "Bukalapak BUKA saham",
+    "ISAT": "Indosat ISAT saham",
+    "UNVR": "Unilever Indonesia UNVR saham",
+    "ICBP": "Indofood CBP ICBP saham",
+    "INDF": "Indofood INDF saham",
+    "AMRT": "Alfamart AMRT saham",
+    "ADRO": "Adaro Energy ADRO saham",
+    "ITMG": "Indo Tambangraya ITMG saham",
+    "PTBA": "Bukit Asam PTBA saham",
+    "ANTM": "Antam ANTM saham",
+    "PGAS": "Perusahaan Gas Negara PGAS saham",
+    "ASII": "Astra International ASII saham",
+    "JSMR": "Jasa Marga JSMR saham",
+    "CPIN": "Charoen Pokphand CPIN saham",
+    "KLBF": "Kalbe Farma KLBF saham",
 }
 
-# Yahoo Finance RSS per ticker (selalu jalan, gratis)
-def yahoo_rss_url(ticker: str) -> str:
-    """Yahoo Finance RSS feed untuk satu ticker."""
-    return f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
-
-
-# ─────────────────────────────────────────────
-# DATA CLASS
-# ─────────────────────────────────────────────
 
 @dataclass
 class Document:
@@ -77,13 +78,9 @@ class Document:
         }
 
 
-# ─────────────────────────────────────────────
-# TEXT UTILITIES
-# ─────────────────────────────────────────────
-
 def clean_text(text: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", text)          # strip HTML tags
-    text = re.sub(r"&[a-z]+;", " ", text)          # strip HTML entities
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-z]+;", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -91,9 +88,7 @@ def clean_text(text: str) -> str:
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     if len(text) <= chunk_size:
         return [text] if len(text) > 50 else []
-
-    chunks = []
-    start  = 0
+    chunks, start = [], 0
     while start < len(text):
         end = start + chunk_size
         if end < len(text):
@@ -102,238 +97,145 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                 end = space_idx
         chunks.append(text[start:end].strip())
         start = end - overlap
-
     return [c for c in chunks if len(c) > 50]
 
 
-# ─────────────────────────────────────────────
-# RSS FETCHER (universal)
-# ─────────────────────────────────────────────
+# ── SOURCE 1: TRADINGVIEW IDEAS ──
 
-def fetch_rss(url: str, keyword: str = None, max_items: int = 10) -> list[dict]:
-    """
-    Fetch dan parse RSS feed. Filter by keyword jika diberikan.
+def scrape_tradingview_ideas(ticker: str, max_items: int = 6) -> list[Document]:
+    """Scrape analisis komunitas trader dari TradingView Ideas."""
+    ticker_clean = ticker.replace(".JK", "").upper()
+    url = f"https://id.tradingview.com/symbols/IDX-{ticker_clean}/ideas/"
+    docs = []
 
-    Returns list of dicts: {title, summary, link, published}
-    """
     try:
-        feed = feedparser.parse(url, request_headers=HEADERS)
-
-        if feed.bozo and not feed.entries:
-            logger.warning(f"[loader] RSS parse warning for {url}: {feed.bozo_exception}")
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            logger.warning(f"[loader] TradingView {ticker_clean}: HTTP {resp.status_code}")
             return []
 
-        items = []
-        for entry in feed.entries[:max_items * 3]:  # ambil lebih banyak sebelum filter
-            title   = entry.get("title", "")
-            summary = entry.get("summary", "") or entry.get("description", "")
-            link    = entry.get("link", "")
-            pub     = entry.get("published", "") or entry.get("updated", "")
-
-            # Bersihkan HTML dari summary
-            summary = clean_text(summary)
-            title   = clean_text(title)
-
-            # Filter by keyword kalau ada
-            if keyword:
-                kw_lower = keyword.lower()
-                combined = (title + " " + summary).lower()
-                if kw_lower not in combined:
-                    continue
-
-            if len(title) < 5:
-                continue
-
-            items.append({
-                "title":     title,
-                "summary":   summary,
-                "link":      link,
-                "published": pub,
-            })
-
-            if len(items) >= max_items:
-                break
-
-        logger.info(f"[loader] RSS {url[:50]}: {len(items)} items (keyword='{keyword}')")
-        return items
-
-    except Exception as e:
-        logger.warning(f"[loader] RSS fetch error {url}: {e}")
-        return []
-
-
-def fetch_article_content(url: str) -> str:
-    """
-    Fetch full article content dari URL.
-    Dipakai untuk memperkaya summary RSS yang biasanya pendek.
-    """
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=8)
-        resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Coba berbagai selector umum untuk konten artikel
-        for selector in [
-            "div.detail-text", "div.content-text", "div.article-body",
-            "div.detail", "article", "div.post-content",
-            "div[class*='content']", "div[class*='article']",
-        ]:
-            tag = soup.select_one(selector)
-            if tag:
-                paragraphs = tag.find_all("p")
-                text = " ".join(p.get_text(" ", strip=True) for p in paragraphs if len(p.get_text()) > 30)
-                if len(text) > 200:
-                    return clean_text(text)
+        # Hapus elemen noise
+        for tag in soup.find_all(["nav", "footer", "script", "style"]):
+            tag.decompose()
 
-        # Fallback: ambil semua <p> di halaman
-        paragraphs = soup.find_all("p")
-        text = " ".join(p.get_text(" ", strip=True) for p in paragraphs if len(p.get_text()) > 40)
-        return clean_text(text)[:3000]  # cap 3000 char
+        # Ambil semua text block panjang
+        all_text = soup.get_text(separator="\n")
+        lines    = [l.strip() for l in all_text.split("\n") if len(l.strip()) > 80]
+
+        NOISE = [
+            "Bahasa Indonesia", "Pilih data pasar", "Lebih dari sekadar",
+            "TradingView", "oleh ", "Diupdate", "Tampilkan lebih",
+            "Pembelian", "Penjualan", "Ide-Ide", "Skrip Pine",
+        ]
+
+        current_block = []
+        blocks = []
+
+        for line in lines:
+            if any(noise in line for noise in NOISE):
+                if current_block and len(" ".join(current_block)) > 100:
+                    blocks.append(" ".join(current_block))
+                current_block = []
+                continue
+            current_block.append(line)
+            if len(" ".join(current_block)) > 800:
+                blocks.append(" ".join(current_block))
+                current_block = []
+
+        if current_block and len(" ".join(current_block)) > 100:
+            blocks.append(" ".join(current_block))
+
+        for i, block in enumerate(blocks[:max_items]):
+            content = clean_text(block)
+            if len(content) < 80:
+                continue
+            title = content[:100].split(".")[0]
+            docs.append(Document(
+                content  = content[:2000],
+                source   = url,
+                ticker   = ticker_clean,
+                doc_type = "tradingview_idea",
+                title    = f"Analisis Trader {ticker_clean}: {title}",
+                date     = "",
+            ))
+
+        logger.info(f"[loader] TradingView Ideas: {len(docs)} analisis untuk {ticker_clean}")
 
     except Exception as e:
-        logger.debug(f"[loader] Article fetch error {url}: {e}")
-        return ""
+        logger.warning(f"[loader] TradingView Ideas error {ticker_clean}: {e}")
 
-
-# ─────────────────────────────────────────────
-# SOURCE 1: KONTAN RSS
-# ─────────────────────────────────────────────
-
-def scrape_kontan_rss(ticker: str, max_items: int = 5) -> list[Document]:
-    """
-    Ambil berita dari Kontan via RSS feed resmi.
-    Filter by ticker name / company name.
-    """
-    ticker_clean = ticker.replace(".JK", "").upper()
-    docs = []
-
-    # Coba beberapa RSS Kontan
-    rss_urls = [
-        "https://investasi.kontan.co.id/rss",
-        "https://www.kontan.co.id/rss/investasi",
-        "https://www.kontan.co.id/rss",
-    ]
-
-    for rss_url in rss_urls:
-        items = fetch_rss(rss_url, keyword=ticker_clean, max_items=max_items)
-        for item in items:
-            # Gabungkan title + summary sebagai konten dasar
-            content = f"{item['title']}. {item['summary']}"
-
-            # Coba fetch full article (optional, boleh gagal)
-            if item.get("link") and len(content) < 300:
-                full = fetch_article_content(item["link"])
-                if full:
-                    content = f"{item['title']}. {full}"
-                time.sleep(0.3)
-
-            content = clean_text(content)
-            if len(content) < 80:
-                continue
-
-            docs.append(Document(
-                content  = content,
-                source   = item.get("link", rss_url),
-                ticker   = ticker_clean,
-                doc_type = "news",
-                title    = item["title"][:200],
-                date     = item.get("published", ""),
-            ))
-
-        if docs:
-            break  # cukup dari satu sumber
-
-    logger.info(f"[loader] Kontan RSS: {len(docs)} berita untuk {ticker_clean}")
     return docs
 
 
-# ─────────────────────────────────────────────
-# SOURCE 2: CNBC INDONESIA RSS
-# ─────────────────────────────────────────────
+# ── SOURCE 2: GOOGLE NEWS RSS ──
 
-def scrape_cnbc_rss(ticker: str, max_items: int = 5) -> list[Document]:
-    """Ambil berita dari CNBC Indonesia via RSS."""
-    ticker_clean = ticker.replace(".JK", "").upper()
+def scrape_google_news(ticker: str, max_items: int = 5) -> list[Document]:
+    ticker_clean  = ticker.replace(".JK", "").upper()
+    query         = COMPANY_NAMES.get(ticker_clean, f"{ticker_clean} saham IDX")
+    query_encoded = urllib.parse.quote(query)
+    url           = f"https://news.google.com/rss/search?q={query_encoded}&hl=id&gl=ID&ceid=ID:id"
     docs = []
+    try:
+        feed = feedparser.parse(url, request_headers=HEADERS)
+        for entry in feed.entries[:max_items]:
+            title   = clean_text(entry.get("title", ""))
+            summary = clean_text(entry.get("summary", "") or entry.get("description", ""))
+            content = f"{title}. {summary}" if summary else title
+            if len(content) < 30:
+                continue
+            docs.append(Document(
+                content  = clean_text(content),
+                source   = entry.get("link", url),
+                ticker   = ticker_clean,
+                doc_type = "news",
+                title    = title[:200],
+                date     = entry.get("published", ""),
+            ))
+    except Exception as e:
+        logger.warning(f"[loader] Google News error {ticker_clean}: {e}")
+    logger.info(f"[loader] Google News: {len(docs)} berita untuk {ticker_clean}")
+    return docs
 
-    rss_urls = [
-        "https://www.cnbcindonesia.com/RSS/pasar-modal.xml",
-        "https://www.cnbcindonesia.com/RSS/market.xml",
-        "https://www.cnbcindonesia.com/RSS/news.xml",
-    ]
 
-    for rss_url in rss_urls:
-        items = fetch_rss(rss_url, keyword=ticker_clean, max_items=max_items)
-        for item in items:
-            content = clean_text(f"{item['title']}. {item['summary']}")
-            if len(content) < 80:
+# ── SOURCE 3: YAHOO FINANCE RSS ──
+
+def scrape_yahoo_rss(ticker: str, max_items: int = 3) -> list[Document]:
+    ticker_clean = ticker.replace(".JK", "").upper()
+    url  = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker_clean}.JK&region=US&lang=en-US"
+    docs = []
+    try:
+        feed = feedparser.parse(url, request_headers=HEADERS)
+        for entry in feed.entries[:max_items]:
+            title   = clean_text(entry.get("title", ""))
+            summary = clean_text(entry.get("summary", ""))
+            content = f"{title}. {summary}" if summary else title
+            if len(content) < 20:
                 continue
             docs.append(Document(
                 content  = content,
-                source   = item.get("link", rss_url),
+                source   = entry.get("link", url),
                 ticker   = ticker_clean,
-                doc_type = "news",
-                title    = item["title"][:200],
-                date     = item.get("published", ""),
+                doc_type = "news_en",
+                title    = title[:200],
+                date     = entry.get("published", ""),
             ))
-
-    logger.info(f"[loader] CNBC RSS: {len(docs)} berita untuk {ticker_clean}")
+    except Exception as e:
+        logger.warning(f"[loader] Yahoo RSS error {ticker_clean}: {e}")
     return docs
 
 
-# ─────────────────────────────────────────────
-# SOURCE 3: YAHOO FINANCE RSS (paling reliable)
-# ─────────────────────────────────────────────
-
-def scrape_yahoo_rss(ticker: str, max_items: int = 5) -> list[Document]:
-    """
-    Yahoo Finance RSS — sangat reliable, selalu jalan.
-    Berita dalam Bahasa Inggris tapi konteksnya relevan.
-    """
-    ticker_clean = ticker.replace(".JK", "").upper()
-    ticker_jk    = f"{ticker_clean}.JK"
-
-    url   = yahoo_rss_url(ticker_jk)
-    items = fetch_rss(url, max_items=max_items)
-    docs  = []
-
-    for item in items:
-        content = clean_text(f"{item['title']}. {item['summary']}")
-        if len(content) < 50:
-            content = item["title"]
-        if len(content) < 20:
-            continue
-
-        docs.append(Document(
-            content  = content,
-            source   = item.get("link", url),
-            ticker   = ticker_clean,
-            doc_type = "news_en",
-            title    = item["title"][:200],
-            date     = item.get("published", ""),
-        ))
-
-    logger.info(f"[loader] Yahoo Finance RSS: {len(docs)} berita untuk {ticker_clean}")
-    return docs
-
-
-# ─────────────────────────────────────────────
-# SOURCE 4: PDF PARSER
-# ─────────────────────────────────────────────
+# ── SOURCE 4: PDF ──
 
 def parse_pdf(pdf_path: str, ticker: str = "UNKNOWN") -> list[Document]:
-    """Parse PDF laporan keuangan menggunakan PyMuPDF."""
     try:
         import fitz
     except ImportError:
-        logger.error("[loader] PyMuPDF belum terinstall: pip install pymupdf")
         return []
-
     path = Path(pdf_path)
     if not path.exists():
-        logger.error(f"[loader] PDF tidak ditemukan: {pdf_path}")
         return []
-
     docs = []
     try:
         pdf = fitz.open(str(path))
@@ -350,37 +252,26 @@ def parse_pdf(pdf_path: str, ticker: str = "UNKNOWN") -> list[Document]:
                 date     = "",
             ))
         pdf.close()
-        logger.info(f"[loader] PDF '{path.name}': {len(docs)} halaman")
     except Exception as e:
         logger.error(f"[loader] PDF error: {e}")
-
     return docs
 
 
-# ─────────────────────────────────────────────
-# MAIN LOADER
-# ─────────────────────────────────────────────
+# ── MAIN ──
 
-def load_all_documents(
-    ticker: str,
-    pdf_paths: list[str] = None,
-    max_news: int = 5,
-) -> list[Document]:
-    """
-    Load semua dokumen untuk satu ticker dari semua sumber:
-    Kontan RSS + CNBC RSS + Yahoo Finance RSS + PDF (opsional).
-    """
+def load_all_documents(ticker: str, pdf_paths: list[str] = None, max_news: int = 5) -> list[Document]:
     ticker_clean = ticker.replace(".JK", "").upper()
     all_docs: list[Document] = []
 
-    # 1. Kontan RSS
-    all_docs.extend(scrape_kontan_rss(ticker_clean, max_items=max_news))
+    # 1. TradingView Ideas — analisis paling relevan untuk RAG
+    all_docs.extend(scrape_tradingview_ideas(ticker_clean, max_items=6))
 
-    # 2. CNBC Indonesia RSS
-    all_docs.extend(scrape_cnbc_rss(ticker_clean, max_items=max_news))
+    # 2. Google News RSS — berita terbaru
+    all_docs.extend(scrape_google_news(ticker_clean, max_items=max_news))
 
-    # 3. Yahoo Finance RSS (fallback paling reliable)
-    all_docs.extend(scrape_yahoo_rss(ticker_clean, max_items=max_news))
+    # 3. Yahoo Finance backup
+    if len(all_docs) < 4:
+        all_docs.extend(scrape_yahoo_rss(ticker_clean, max_items=3))
 
     # 4. PDF opsional
     for pdf_path in (pdf_paths or []):
@@ -391,7 +282,6 @@ def load_all_documents(
 
 
 def chunk_documents(docs: list[Document]) -> list[tuple[str, dict]]:
-    """Chunk semua dokumen → list of (text, metadata) siap ChromaDB."""
     result = []
     for doc in docs:
         for i, chunk in enumerate(chunk_text(doc.content)):

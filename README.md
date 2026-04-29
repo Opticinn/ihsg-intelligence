@@ -26,7 +26,7 @@ Users can interact through a natural language chat interface powered by a locall
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                   IHSG Intelligence Platform                     │
+│                   IHSG Intelligence Platform                    │
 ├──────────────┬──────────────┬───────────────┬───────────────────┤
 │  Phase 1     │  Phase 2     │   Phase 3     │     Phase 4       │
 │  Data & API  │  ML Pipeline │   RAG + LLM   │    Monitoring     │

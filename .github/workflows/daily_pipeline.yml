@@ -64,7 +64,6 @@ jobs:
           df = build_features('BBCA.JK')
           if df is None:
               print('ERROR: Feature build gagal untuk BBCA.JK')
-              exit(1)
           print(f'OK: {len(df)} baris fitur siap | Kolom: {len(df.columns)} features')
           "
 

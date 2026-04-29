@@ -17,7 +17,7 @@ load_dotenv()
 # Konfigurasi Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ALERT_THRESHOLD = 0.10 # Ambang batas 40% sesuai kesepakatan
+ALERT_THRESHOLD = 0.38 # Ambang batas 40% sesuai kesepakatan
 
 # Konfigurasi Redis
 RAW_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

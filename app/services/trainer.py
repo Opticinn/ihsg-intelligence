@@ -222,6 +222,13 @@ def train_model(tickers: list[str] = None) -> dict:
             "registered":     registered,
         }
         logger.info(f"[trainer] Selesai: {result}")
+        
+        from app.services.telegram import notify_retrain_done
+        notify_retrain_done(
+        train_acc=train_acc,
+        test_acc=test_acc,
+        trigger="manual"
+        )
         return result
 
 

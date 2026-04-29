@@ -161,7 +161,17 @@ def run_data_drift(reference_days: int = 60, current_days: int = 14) -> dict:
     drift_result = report_dict.get("metrics", [{}])[0].get("result", {})
     drift_share  = drift_result.get("share_of_drifted_columns", 0)
     n_drifted    = drift_result.get("number_of_drifted_columns", 0)
-    should_retrain = drift_share > 0.3
+    # Hanya retrain kalau drift ekstrem DAN sudah waktunya
+    today_wib = datetime.utcnow().hour + 7  # approximate WIB
+    weekday   = datetime.utcnow().weekday() # 0=Senin, 3=Kamis
+
+    is_scheduled_day = weekday in (0, 3)  # Senin atau Kamis
+
+    should_retrain = (
+        is_scheduled_day and drift_share > 0.30  # jadwal rutin
+    ) or (
+        drift_share > 0.80  # ekstrem banget, kapanpun
+    )
 
     logger.info(
         f"[monitoring] Drift: {n_drifted} kolom ({drift_share:.1%}) "
@@ -269,6 +279,48 @@ def run_model_performance() -> dict:
     }
 
 
+def save_to_db(summary: dict):
+    """Simpan hasil monitoring ke tabel monitoring_logs di PostgreSQL."""
+    try:
+        from sqlalchemy import text
+        drift = summary.get("data_drift", {})
+        model = summary.get("model_performance", {})
+        dq    = summary.get("data_quality", {})
+        sig   = model.get("signal_dist", {})
+
+        with engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO monitoring_logs (
+                    run_at, tickers_ok, tickers_total,
+                    drift_share, n_drifted, should_retrain,
+                    model_acc, model_baseline, acc_drift, f1_macro,
+                    signal_buy, signal_hold, signal_sell
+                ) VALUES (
+                    NOW(), :tickers_ok, :tickers_total,
+                    :drift_share, :n_drifted, :should_retrain,
+                    :model_acc, :model_baseline, :acc_drift, :f1_macro,
+                    :signal_buy, :signal_hold, :signal_sell
+                )
+            """), {
+                "tickers_ok":    dq.get("tickers_ok", 0),
+                "tickers_total": dq.get("tickers_total", 0),
+                "drift_share":   drift.get("drift_share", 0),
+                "n_drifted":     drift.get("n_drifted", 0),
+                "should_retrain":drift.get("should_retrain", False),
+                "model_acc":     model.get("current_acc", 0),
+                "model_baseline":model.get("baseline_acc", 0),
+                "acc_drift":     model.get("acc_drift", 0),
+                "f1_macro":      model.get("f1_macro", 0),
+                "signal_buy":    sig.get("BUY", 0),
+                "signal_hold":   sig.get("HOLD", 0),
+                "signal_sell":   sig.get("SELL", 0),
+            })
+            conn.commit()
+        logger.info("[monitoring] ✅ Hasil disimpan ke tabel monitoring_logs")
+    except Exception as e:
+        logger.error(f"[monitoring] ❌ Gagal simpan ke DB: {e}")
+
+
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
@@ -313,6 +365,38 @@ def run_full_monitoring() -> dict:
     logger.info(f"  Summary JSON  : {summary_path}")
     logger.info("=" * 60)
 
+
+    save_to_db(summary)
+    
+    # Kirim notifikasi Telegram
+    from app.services.telegram import notify_monitoring_summary, notify_drift_alert
+    notify_monitoring_summary(summary)
+    notify_drift_alert(
+        drift_share=summary["data_drift"].get("drift_share", 0),
+        n_drifted=summary["data_drift"].get("n_drifted", 0)
+    )
+    
+    weekday        = datetime.utcnow().weekday()
+    is_sched_day   = weekday in (0, 3)  # Senin atau Kamis
+    drift_share    = summary["data_drift"].get("drift_share", 0)
+    acc_drift_val  = summary["model_performance"].get("acc_drift", 0)
+
+    combined_retrain = (
+        acc_drift_val > 0.10 or                          # accuracy drop parah
+        (is_sched_day and drift_share > 0.30) or         # jadwal rutin
+        (drift_share > 0.80 and acc_drift_val > 0.03)    # ekstrem + mulai turun
+    )
+
+    if combined_retrain:
+        from app.services.telegram import send_message
+        send_message(
+            "🔁 *Retrain Dijadwalkan — IHSG Intelligence*\n\n"
+            f"📈 Drift: `{drift_share:.1%}`\n"
+            f"📉 Acc drift: `{acc_drift_val:+.4f}`\n"
+            f"📅 Hari jadwal: `{'Ya' if is_sched_day else 'Tidak'}`\n\n"
+            "_Retrain akan berjalan otomatis via GitHub Actions._"
+        )
+    
     return summary
 
 

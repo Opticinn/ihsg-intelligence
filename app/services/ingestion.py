@@ -76,12 +76,26 @@ def fetch_and_save_data(ticker: str, period: str = "1mo"):
 
         db = SessionLocal()
         try:
-            db.query(StockHistory).filter(StockHistory.ticker == ticker).delete()
-            records   = df.to_dict(orient='records')
-            db_objects = [StockHistory(**record) for record in records]
-            db.bulk_save_objects(db_objects)
-            db.commit()
-            logging.info(f"✅ {ticker}: {len(records)} baris valid disimpan ke DB.")
+            # Ambil tanggal yang sudah ada di DB
+            existing_dates = set(
+                row.date for row in
+                db.query(StockHistory.date)
+                .filter(StockHistory.ticker == ticker)
+                .all()
+            )
+
+            # Hanya insert baris yang belum ada
+            new_records = [
+                r for r in df.to_dict(orient='records')
+                if pd.Timestamp(r['date']) not in existing_dates
+            ]
+
+            if new_records:
+                db.bulk_save_objects([StockHistory(**r) for r in new_records])
+                db.commit()
+                logging.info(f"✅ {ticker}: {len(new_records)} baris baru disimpan.")
+            else:
+                logging.info(f"⏭️ {ticker}: tidak ada data baru.")
         except Exception as db_err:
             db.rollback()
             logging.error(f"DB error {ticker}: {db_err}")

@@ -23,6 +23,7 @@ from app.models.prediction import Prediction
 from app.services.ingestion import IHSG_TICKERS
 from app.services.event_bus import publish_signal
 from app.services.llm_service import generate_stock_analysis
+from app.services.telegram import notify_signal
 from app.services.predictor import (
     _cached_model_version,
     load_model,
@@ -115,13 +116,21 @@ async def predict_single(request: Request, ticker: str):
                 logger.info(f"⚡ [CACHE HIT] {ticker} diambil dari Redis.")
                 parsed_result = json.loads(cached_result)
                 
-                # TERIAKKAN KE WEBSOCKET
-                if "signal" in parsed_result:
+                if "signal" in result:
                     await publish_signal(
-                        ticker=parsed_result["ticker"],
-                        signal=parsed_result["signal"],
-                        confidence=parsed_result.get("confidence", 0)
+                        ticker=result["ticker"],
+                        signal=result["signal"],
+                        confidence=result.get("confidence", 0)
                     )
+
+                # KIRIM KE TELEGRAM
+                from app.services.telegram import notify_signal
+                notify_signal(
+                    ticker=result["ticker"],
+                    signal=result["signal"],
+                    confidence=result["confidence"],
+                    close_price=result["features"].get("close_price", 0)
+                )
                 return PredictResponse(**parsed_result)
         except Exception as e:
             logger.warning(f"⚠️ Redis read error: {e}")
@@ -155,6 +164,13 @@ async def predict_single(request: Request, ticker: str):
     except Exception as e:
         logger.error(f"[ml_api] Predict error untuk {ticker}: {e}")
         raise HTTPException(status_code=500, detail=f"Error prediksi: {str(e)}")
+    
+    notify_signal(
+    ticker=result["ticker"],
+    signal=result["signal"],
+    confidence=result["confidence"],
+    close_price=result["features"].get("close_price", 0)
+)
 
 
 @router.get("/predict/batch/all", summary="Prediksi semua ticker IHSG")

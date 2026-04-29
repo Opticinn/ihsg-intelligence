@@ -5,40 +5,22 @@ on:
     # Senin–Jumat jam 16:30 WIB (09:30 UTC) — 30 menit setelah pasar tutup
     - cron: '30 9 * * 1-5'
   workflow_dispatch:    # bisa dijalankan manual dari GitHub UI
+    inputs:
+      force_retrain:
+        description: 'Force retrain meski tidak memenuhi threshold?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
 
 jobs:
+
   # ─────────────────────────────────────────
   # JOB 1: Ingestion data harian
   # ─────────────────────────────────────────
   ingest:
     name: 📥 Data Ingestion
     runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run ingestion pipeline
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m app.services.ingestion
-
-  # ─────────────────────────────────────────
-  # JOB 2: Data Quality Monitoring (Evidently)
-  # ─────────────────────────────────────────
-  monitor:
-    name: 📊 Data Quality Check
-    runs-on: ubuntu-latest
-    needs: ingest    # jalankan setelah ingestion selesai
 
     steps:
       - uses: actions/checkout@v4
@@ -50,15 +32,13 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Run Evidently monitoring
+      - name: Run ingestion pipeline
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m app.services.monitoring
+        run: python -m app.services.ingestion
 
   # ─────────────────────────────────────────
-  # JOB 3: Feature Engineering Check
-  # Hanya verifikasi fitur bisa dihitung — training tidak otomatis
-  # Training dilakukan manual via POST /ml/train
+  # JOB 2: Feature Engineering Check
   # ─────────────────────────────────────────
   feature-check:
     name: 🧮 Feature Engineering Verify
@@ -83,7 +63,136 @@ jobs:
           from app.services.features import build_features
           df = build_features('BBCA.JK')
           if df is None:
-              print('WARNING: Feature build gagal untuk BBCA.JK')
+              print('ERROR: Feature build gagal untuk BBCA.JK')
               exit(1)
-          print(f'OK: {len(df)} baris fitur siap | Kolom: {list(df.columns)}')
+          print(f'OK: {len(df)} baris fitur siap | Kolom: {len(df.columns)} features')
           "
+
+  # ─────────────────────────────────────────
+  # JOB 3: Full Monitoring (Evidently AI)
+  # Data Quality + Data Drift + Model Performance
+  # ─────────────────────────────────────────
+  monitor:
+    name: 📊 Full Monitoring (Evidently)
+    runs-on: ubuntu-latest
+    needs: [ingest, feature-check]
+    outputs:
+      should_retrain: ${{ steps.check.outputs.should_retrain }}
+      drift_share:    ${{ steps.check.outputs.drift_share }}
+      model_acc:      ${{ steps.check.outputs.model_acc }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run full monitoring pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m app.services.monitoring
+
+      - name: Parse monitoring results
+        id: check
+        run: |
+          python -c "
+          import json, os
+
+          with open('reports/monitoring_summary.json') as f:
+              summary = json.load(f)
+
+          drift        = summary.get('data_drift', {})
+          model        = summary.get('model_performance', {})
+          drift_share  = drift.get('drift_share', 0)
+          model_acc    = model.get('current_acc', 0)
+          retrain_drift= drift.get('should_retrain', False)
+          retrain_model= model.get('should_retrain', False)
+          should_retrain = retrain_drift or retrain_model
+
+          print(f'drift_share={drift_share:.4f}')
+          print(f'model_acc={model_acc:.4f}')
+          print(f'should_retrain={str(should_retrain).lower()}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'should_retrain={str(should_retrain).lower()}\n')
+              f.write(f'drift_share={drift_share:.4f}\n')
+              f.write(f'model_acc={model_acc:.4f}\n')
+          "
+
+      - name: Upload monitoring reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-reports-${{ github.run_id }}
+          path: reports/
+          retention-days: 14
+
+  # ─────────────────────────────────────────
+  # JOB 4: Adaptive Retrain (kondisional)
+  # Hanya jalan kalau drift terdeteksi atau force
+  # ─────────────────────────────────────────
+  retrain:
+    name: 🤖 Adaptive Retrain
+    runs-on: ubuntu-latest
+    needs: monitor
+    if: |
+      needs.monitor.outputs.should_retrain == 'true' ||
+      github.event.inputs.force_retrain == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run training
+        env:
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          MLFLOW_TRACKING_URI: mlruns
+        run: |
+          python -c "
+          from app.services.trainer import train_model
+          result = train_model()
+          print(f'Status  : {result[\"status\"]}')
+          print(f'Train acc: {result[\"train_accuracy\"]}')
+          print(f'Test acc : {result[\"test_accuracy\"]}')
+          print(f'Gap      : {result[\"overfit_gap\"]}')
+          if result['status'] != 'success':
+              exit(1)
+          "
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ github.run_id }}
+          path: mlruns/saved_models/
+          retention-days: 30
+
+  # ─────────────────────────────────────────
+  # JOB 5: Summary Notification
+  # ─────────────────────────────────────────
+  notify:
+    name: 📋 Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [monitor, retrain]
+    if: always()
+
+    steps:
+      - name: Print summary
+        run: |
+          echo "=================================================="
+          echo "IHSG Intelligence — Daily Pipeline Summary"
+          echo "=================================================="
+          echo "Data Drift   : ${{ needs.monitor.outputs.drift_share }}"
+          echo "Model Acc    : ${{ needs.monitor.outputs.model_acc }}"
+          echo "Retrain Flag : ${{ needs.monitor.outputs.should_retrain }}"
+          echo "Retrain Job  : ${{ needs.retrain.result }}"
+          echo "Run ID       : ${{ github.run_id }}"
+          echo "=================================================="

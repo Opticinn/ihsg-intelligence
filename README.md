@@ -307,10 +307,10 @@ ihsg-intelligence/
 - [x] Phase 2 — XGBoost ML pipeline, MLflow tracking, Redis caching
 - [x] Phase 3 — RAG system, Llama 3.2, TradingView scraper, auto-ingest
 - [x] Phase 4 — Evidently monitoring, Grafana dashboard, Telegram alerts, adaptive CI/CD
-- [ ] Phase 5 — Full adaptive retraining implementation
-- [ ] Deploy to Hugging Face Spaces
-- [ ] Upgrade LLM to larger model (Llama 3.1 70B or Mistral)
-- [ ] PDF parser for IDX financial reports (PyMuPDF — foundation ready)
+- [x] Phase 5 — Full adaptive retraining implementation
+- [ ] HF Spaces deployment (blocked: Ollama RAM requirement > free tier limit)
+- [ ] Larger LLM upgrade (blocked: local hardware — foundation ready, 1-line config change)
+- [ ] PDF upload endpoint for IDX reports (PyMuPDF ready, endpoint pending)
 
 ---
 

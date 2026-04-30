@@ -1,4 +1,4 @@
-# 🧠 IHSG Intelligence Platform
+# 🧠💵📈 IHSG Intelligence Platform
 
 > **An end-to-end MLOps + RAG system for Indonesian Stock Exchange (IHSG) short-term signal prediction**  
 > Built with Zero-Dollar Architecture — no cloud fees, no paid APIs.
@@ -11,32 +11,81 @@
 ![Evidently](https://img.shields.io/badge/Evidently_AI-Monitoring-yellow?style=flat-square)
 ![Grafana](https://img.shields.io/badge/Grafana-Dashboard-orange?style=flat-square&logo=grafana)
 ![Telegram](https://img.shields.io/badge/Telegram-Alerts-blue?style=flat-square&logo=telegram)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-black?style=flat-square&logo=githubactions)
+
+---
+
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/chat_ui.png" alt="Chat Interface" width="400"/>
+      <br/><sub><b>AI Chat Interface</b></sub>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/grafana_dashboard.png" alt="Grafana Dashboard" width="400"/>
+      <br/><sub><b>Grafana MLOps Dashboard</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/swagger_ui.png" alt="Swagger API" width="400"/>
+      <br/><sub><b>REST API — Swagger UI</b></sub>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/telegram_alert.png" alt="Telegram Alert" width="400"/>
+      <br/><sub><b>Telegram Signal Alert</b></sub>
+    </td>
+  </tr>
+</table>
+
+> 📁 Place your screenshots in `docs/screenshots/` folder.  
+> Recommended: `chat_ui.png`, `grafana_dashboard.png`, `swagger_ui.png`, `telegram_alert.png`
 
 ---
 
 ## 📌 Overview
 
-IHSG Intelligence Platform is a production-grade ML system that predicts short-term trading signals (BUY / HOLD / SELL) for 22 high-cap Indonesian stocks, enriched with real-time news analysis via a RAG (Retrieval-Augmented Generation) pipeline.
+IHSG Intelligence Platform is a production-grade ML system that predicts short-term trading signals **(BUY / HOLD / SELL)** for 22 high-cap Indonesian stocks, enriched with real-time news analysis via a RAG (Retrieval-Augmented Generation) pipeline.
 
-Users can interact through a natural language chat interface powered by a locally-running LLM (Llama 3.2), which answers stock-related questions using a combination of ML predictions and live data fetched from TradingView Ideas and Google News.
+Users interact through a natural language chat interface powered by a locally-running LLM (Llama 3.2), which answers stock-related questions using a combination of ML predictions and live data fetched from **TradingView Ideas** and **Google News**.
+
+### What makes this different?
+- **Zero-Dollar Stack** — runs entirely on free-tier services and local hardware
+- **Production-grade MLOps** — monitoring, drift detection, adaptive retraining, CI/CD pipeline
+- **RAG over financial data** — LLM grounded in real market data, not hallucination
+- **End-to-end** — from raw OHLCV ingestion to Telegram alerts in one cohesive system
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                   IHSG Intelligence Platform                    │
-├──────────────┬──────────────┬───────────────┬───────────────────┤
-│  Phase 1     │  Phase 2     │   Phase 3     │     Phase 4       │
-│  Data & API  │  ML Pipeline │   RAG + LLM   │    Monitoring     │
-├──────────────┼──────────────┼───────────────┼───────────────────┤
-│ FastAPI      │ XGBoost      │ Llama 3.2     │ Evidently AI      │
-│ PostgreSQL   │ MLflow       │ ChromaDB      │ Grafana Cloud     │
-│ Supabase     │ Feature Eng  │ TradingView   │ Telegram Bot      │
-│ JWT Auth     │ Predictor    │ Google News   │ GitHub Actions    │
-│ Redis Cache  │ Celery       │ LangChain     │ Adaptive Retrain  │
-└──────────────┴──────────────┴───────────────┴───────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                     IHSG Intelligence Platform                       │
+├─────────────┬─────────────┬──────────────┬──────────────┬───────────┤
+│  Phase 1    │  Phase 2    │   Phase 3    │   Phase 4    │  Phase 5  │
+│  Data & API │  ML Pipeline│   RAG + LLM  │  Monitoring  │  Adaptive │
+│             │             │              │  & Alerting  │  Retrain  │
+├─────────────┼─────────────┼──────────────┼──────────────┼───────────┤
+│ FastAPI     │ XGBoost     │ Llama 3.2    │ Evidently AI │ Retrain   │
+│ PostgreSQL  │ MLflow      │ ChromaDB     │ Grafana Cloud│ Trigger   │
+│ Supabase    │ Feature Eng │ TradingView  │ Telegram Bot │ State Mgmt│
+│ JWT Auth    │ Predictor   │ Google News  │ GitHub Actions│ API Ctrl │
+│ Redis Cache │ Celery      │ LangChain    │ Auto Retrain │ Dispatch  │
+└─────────────┴─────────────┴──────────────┴──────────────┴───────────┘
+```
+
+**Data Flow:**
+```
+yfinance → PostgreSQL → Feature Engineering → XGBoost → Redis Cache
+                                                    ↓
+TradingView + Google News → ChromaDB → Llama 3.2 → Chat Response
+                                                    ↓
+Evidently AI → monitoring_logs → Grafana Dashboard + Telegram Alert
+                                                    ↓
+              GitHub Actions → Adaptive Retrain → New Model
 ```
 
 ---
@@ -44,45 +93,54 @@ Users can interact through a natural language chat interface powered by a locall
 ## ✨ Key Features
 
 ### 🤖 ML Signal Prediction
-- XGBoost multiclass classifier predicting BUY / HOLD / SELL
+- XGBoost multiclass classifier — BUY / HOLD / SELL
 - 20 engineered features: RSI, MACD, Bollinger Bands, Volume Ratio, lag features
 - MLflow experiment tracking with pickle-based model persistence
-- Redis caching — predictions cached for 1 hour per ticker
-- Signal threshold: return > +0.5% → BUY | < -0.5% → SELL | else → HOLD
+- Redis caching — predictions cached 1 hour per ticker
+- Signal label threshold: `return > +0.5%` → BUY | `< -0.5%` → SELL
 
 ### 💬 RAG Chat System
 - Natural language Q&A about IHSG stocks in Bahasa Indonesia
 - Llama 3.2 3B running 100% locally via Ollama (zero cost)
 - ChromaDB vector database for semantic retrieval
 - Real-time data sources (priority order):
-  - **TradingView Ideas** — Indonesian trader community technical analysis
+  - **TradingView Ideas** — community trader technical analysis
   - **Google News RSS** — latest news per ticker (free, no API key)
   - **Internal DB** — price summary, ML signals, sector profiles
-- Auto-detects ticker from user question
+- Auto-detects ticker from natural language question
 - Auto-triggers predict + ingest on first mention of a new ticker
 
 ### 📊 Monitoring & Observability
-- **Evidently AI** — unified reports across all 22 tickers:
-  - Data Quality (ghost row detection, missing values, outliers)
+- **Evidently AI** — unified HTML reports across all 22 tickers:
+  - Data Quality (ghost row detection, missing values)
   - Data Drift (feature distribution shift vs 60-day baseline)
   - Model Performance (accuracy, F1, signal distribution)
 - **Grafana Cloud** — 9-panel MLOps dashboard, 5-minute auto-refresh
-- **Telegram Bot** — real-time alerts for:
-  - Trading signals with confidence > 38%
-  - Data drift alerts > 50%
+- **Telegram Bot** — real-time push alerts for:
+  - Trading signals (confidence > 38%)
+  - Data drift (> 50%)
   - Model accuracy degradation
-  - Daily pipeline status
+  - Daily pipeline completion
+
+### 🔁 Adaptive Retraining (Phase 5)
+- `retrain_trigger.py` — evaluates 4 conditions every run:
+  - Scheduled day (Monday / Thursday)
+  - IHSG market move > ±2.5%
+  - Realized volatility > 90th percentile (30-day window)
+  - Model accuracy drift > 10% from baseline
+- 18-hour cooldown between retrains (prevents over-retraining)
+- State persistence via `retrain_state.pkl`
+- API endpoints: `GET /retrain/status`, `GET /retrain/check`, `POST /retrain/trigger`
+- Emergency dispatch to GitHub Actions via REST API
 
 ### ⚙️ MLOps Pipeline (GitHub Actions)
 ```
-Mon–Fri at 16:30 WIB (09:30 UTC):
+Mon–Fri at 16:30 WIB:
   Ingest → Feature Check → Monitor → Retrain (conditional) → Notify
-```
 
-Adaptive retraining logic — retrain only when:
-- Model accuracy drops > 10% from baseline, OR
-- Scheduled day (Mon/Thu) AND drift > 30%, OR
-- Drift > 80% AND accuracy starts declining > 3%
+On-Demand (adaptive_retrain.yml):
+  Validate → Ingest → Train → Verify → Notify
+```
 
 ---
 
@@ -104,16 +162,17 @@ Adaptive retraining logic — retrain only when:
 |-------|-----------|
 | API | FastAPI, Uvicorn, SlowAPI (rate limiting) |
 | ML | XGBoost 2.x, scikit-learn, MLflow |
-| Feature Engineering | pandas, numpy, ta (technical analysis library) |
+| Feature Engineering | pandas, numpy, ta (technical analysis) |
 | LLM | Llama 3.2 3B via Ollama (100% local) |
 | RAG | LangChain, ChromaDB, HuggingFace Embeddings |
-| Embeddings | paraphrase-multilingual-MiniLM-L12-v2 |
+| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` |
 | Database | PostgreSQL via Supabase (Transaction Pooler port 6543) |
 | Cache | Redis |
 | Task Queue | Celery + gevent (Windows compatible) |
-| Monitoring | Evidently AI 0.4.38, Grafana Cloud |
+| Monitoring | Evidently AI 0.4.38 |
+| Dashboard | Grafana Cloud |
 | Alerting | Telegram Bot API |
-| CI/CD | GitHub Actions (5-job adaptive pipeline) |
+| CI/CD | GitHub Actions (5-job + on-demand pipeline) |
 | Data Sources | yfinance, TradingView scraper, Google News RSS |
 
 ---
@@ -124,7 +183,7 @@ Adaptive retraining logic — retrain only when:
 - Python 3.11
 - Redis (local)
 - [Ollama](https://ollama.com) with `llama3.2` model
-- Supabase account (PostgreSQL)
+- Supabase account (free tier works)
 
 ### Installation
 
@@ -141,7 +200,7 @@ ollama pull llama3.2
 
 # Set up environment variables
 cp .env.example .env
-# Edit .env with your credentials
+# Fill in your credentials
 ```
 
 ### Environment Variables
@@ -151,6 +210,8 @@ DATABASE_URL=postgresql://postgres.[PROJECT-ID]:[PASSWORD]@[HOST].pooler.supabas
 REDIS_URL=redis://localhost:6379/0
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
+GITHUB_TOKEN=your_github_pat          # for /retrain/trigger endpoint
+GITHUB_REPO=username/ihsg-intelligence
 ```
 
 ### Running the System
@@ -162,14 +223,14 @@ uvicorn app.main:app --reload
 # Terminal 2 — Celery worker
 celery -A app.worker.celery_app worker --loglevel=info -P gevent
 
-# Terminal 3 — Ollama LLM server
+# Terminal 3 — Ollama
 ollama serve
 ```
 
 ### First Time Setup
 
 ```bash
-# 1. Backfill 1 year of historical data (239 rows per ticker)
+# 1. Backfill 1 year of historical data (~239 rows per ticker)
 python -m app.services.ingestion_historical
 
 # 2. Train the XGBoost model
@@ -183,7 +244,7 @@ python -m app.services.monitoring
 ```
 
 Open `http://localhost:8000/chat` for the chat interface.  
-Open `http://localhost:8000/docs` for the Swagger API documentation.
+Open `http://localhost:8000/docs` for the Swagger API docs.
 
 ---
 
@@ -191,17 +252,19 @@ Open `http://localhost:8000/docs` for the Swagger API documentation.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/ml/predict/{ticker}` | Get trading signal (Redis cached) |
+| `GET` | `/ml/predict/{ticker}` | Trading signal (Redis cached) |
 | `GET` | `/ml/predict/batch/all` | Predict all 22 tickers |
-| `POST` | `/ml/train` | Trigger model training via Celery |
-| `GET` | `/ml/model/info` | Active model information |
-| `GET` | `/ml/predictions/history` | Prediction history from DB |
+| `POST` | `/ml/train` | Trigger training via Celery |
+| `GET` | `/ml/model/info` | Active model info |
+| `GET` | `/ml/predictions/history` | Prediction history |
 | `POST` | `/rag/chat/ask` | Chat with AI analyst |
 | `POST` | `/rag/ingest/{ticker}` | Ingest documents to ChromaDB |
 | `GET` | `/rag/stats` | ChromaDB statistics |
-| `GET` | `/retrain/status` | Adaptive retraining status |
+| `GET` | `/retrain/status` | Retrain state & config |
+| `GET` | `/retrain/check` | Evaluate retrain conditions |
+| `POST` | `/retrain/trigger` | Emergency retrain via GitHub API |
 | `GET` | `/stocks/{ticker}/history` | OHLCV historical data |
-| `GET` | `/chat` | Chat UI (HTML) |
+| `GET` | `/chat` | Chat UI |
 | `GET` | `/docs` | Swagger UI |
 
 ---
@@ -212,15 +275,15 @@ Open `http://localhost:8000/docs` for the Swagger API documentation.
 |--------|-------|
 | Algorithm | XGBoost Multiclass Classifier |
 | Train Accuracy | 47.4% |
-| Test Accuracy | 38.4% → 45.6% (live evaluation) |
-| Overfit Gap | 0.09 (healthy, target < 0.10) |
+| Test Accuracy | 38.4% → **45.6% on live data** |
+| Overfit Gap | 0.09 (healthy — target < 0.10) |
 | F1 Macro | 0.35 |
 | Random Baseline | 33.3% (3 balanced classes) |
-| Improvement | +5.1% above random baseline |
+| Improvement vs Baseline | **+5.1%** |
 | Features | 20 technical indicators |
-| Training Data | 4,180 rows across 22 tickers |
+| Training Data | 4,180 rows — 22 tickers × ~190 rows |
 
-> Stock price prediction is inherently noisy. A test accuracy of 38-45% above a 33% random baseline is a realistic and honest result. This model is an **analytical aid, not investment advice.**
+> Stock price prediction is inherently noisy. 38-45% above a 33% random baseline is a realistic and honest result for daily OHLCV data. This model is an **analytical aid, not investment advice.**
 
 ---
 
@@ -233,10 +296,11 @@ ihsg-intelligence/
 │   │   ├── auth.py              # JWT authentication
 │   │   ├── ml.py                # ML prediction endpoints
 │   │   ├── rag.py               # RAG chat endpoints
+│   │   ├── retrain.py           # Adaptive retrain control endpoints
 │   │   ├── stocks.py            # Stock history endpoints
-│   │   └── websocket.py         # WebSocket for live signals
+│   │   └── websocket.py         # WebSocket live signals
 │   ├── core/
-│   │   ├── database.py          # SQLAlchemy + Supabase connection
+│   │   ├── database.py          # SQLAlchemy + Supabase
 │   │   ├── security.py          # JWT utilities
 │   │   └── limiter.py           # Rate limiting
 │   ├── models/
@@ -247,25 +311,32 @@ ihsg-intelligence/
 │   ├── services/
 │   │   ├── ingestion.py             # Daily OHLCV ingestion (UPSERT)
 │   │   ├── ingestion_historical.py  # 1-year historical backfill
-│   │   ├── ingest_from_db.py        # Build ChromaDB from PostgreSQL
+│   │   ├── ingest_from_db.py        # ChromaDB from PostgreSQL
 │   │   ├── features.py              # Feature engineering (20 features)
 │   │   ├── trainer.py               # XGBoost training pipeline
-│   │   ├── predictor.py             # Model inference + caching
+│   │   ├── predictor.py             # Inference + Redis caching
 │   │   ├── rag_chat.py              # RAG chat engine
 │   │   ├── vector_store.py          # ChromaDB management
 │   │   ├── document_loader.py       # TradingView + Google News scraper
 │   │   ├── llm_service.py           # Llama 3.2 integration
 │   │   ├── monitoring.py            # Evidently AI pipeline
-│   │   ├── telegram.py              # Telegram notification service
-│   │   └── event_bus.py             # WebSocket signal broadcasting
+│   │   ├── retrain_trigger.py       # Adaptive retrain logic (Phase 5)
+│   │   ├── telegram.py              # Telegram notifications
+│   │   └── event_bus.py             # WebSocket broadcasting
 │   ├── main.py
-│   └── worker.py                # Celery task definitions
+│   └── worker.py
 ├── .github/
 │   └── workflows/
-│       └── daily_pipeline.yml   # 5-job adaptive CI/CD pipeline
+│       ├── daily_pipeline.yml       # Scheduled 5-job pipeline
+│       └── adaptive_retrain.yml     # On-demand retrain workflow
 ├── docs/
-│   ├── model_card_v1.0.pdf      # Model specs, evaluation, deployment
-│   └── incident_report.pdf      # Production bugs & post-mortem
+│   ├── screenshots/                 # Project screenshots (for README)
+│   │   ├── chat_ui.png
+│   │   ├── grafana_dashboard.png
+│   │   ├── swagger_ui.png
+│   │   └── telegram_alert.png
+│   ├── model_card_v1.0.pdf
+│   └── incident_report.pdf
 ├── mlruns/                      # MLflow artifacts (gitignored)
 ├── chroma_db/                   # ChromaDB local store (gitignored)
 ├── reports/                     # Evidently HTML reports (gitignored)
@@ -281,14 +352,15 @@ ihsg-intelligence/
 | Issue | Workaround |
 |-------|-----------|
 | Supabase connection | Use Transaction Pooler port **6543**, not 5432 |
-| XGBoost 2.x compatibility | Remove `use_label_encoder`, serialize via `pickle` not `mlflow.xgboost` |
-| Evidently breaking changes | Pinned to `evidently==0.4.38` |
+| XGBoost 2.x | Remove `use_label_encoder`, serialize via `pickle` not `mlflow.xgboost` |
+| Evidently API changes | Pinned to `evidently==0.4.38` |
 | Celery on Windows | Run with `-P gevent` flag |
-| Redis SSL | Append `?ssl_cert_reqs=CERT_NONE` to REDIS_URL |
-| GOTO.JK volume overflow | Column `volume` changed from `Integer` to `BigInteger` |
+| Redis SSL | Append `?ssl_cert_reqs=CERT_NONE` to `REDIS_URL` |
+| GOTO.JK volume overflow | Column `volume` → `BigInteger` + `ALTER TABLE` in Supabase |
 | yfinance ghost rows | 3-layer filter: ingestion → features → predictor |
-| LLM multi-turn context | `MAX_HISTORY_MSGS = 0` — Llama 3.2 3B is too small for reliable multi-turn |
+| LLM multi-turn confusion | `MAX_HISTORY_MSGS = 0` — Llama 3.2 3B too small for reliable multi-turn |
 | Ingestion data loss | Replaced DELETE+INSERT with UPSERT pattern |
+| pywin32 in CI | Removed from `requirements.txt` — Windows-only, breaks Ubuntu runner |
 
 ---
 
@@ -296,8 +368,8 @@ ihsg-intelligence/
 
 | Document | Description |
 |----------|-------------|
-| [Model Card v1.0](docs/model_card_v1.0.pdf) | Full model specs, features, training, evaluation & deployment details |
-| [Incident Report](docs/incident_report.pdf) | 7 production bugs — timeline, root cause analysis & prevention |
+| [Model Card v1.0](docs/model_card_v1.0.pdf) | Model specs, features, training config, evaluation & deployment |
+| [Incident Report](docs/incident_report.pdf) | 7 production bugs — timeline, root cause & prevention |
 
 ---
 
@@ -306,11 +378,11 @@ ihsg-intelligence/
 - [x] Phase 1 — Data ingestion, REST API, JWT authentication
 - [x] Phase 2 — XGBoost ML pipeline, MLflow tracking, Redis caching
 - [x] Phase 3 — RAG system, Llama 3.2, TradingView scraper, auto-ingest
-- [x] Phase 4 — Evidently monitoring, Grafana dashboard, Telegram alerts, adaptive CI/CD
-- [x] Phase 5 — Full adaptive retraining implementation
-- [ ] HF Spaces deployment (blocked: Ollama RAM requirement > free tier limit)
-- [ ] Larger LLM upgrade (blocked: local hardware — foundation ready, 1-line config change)
-- [ ] PDF upload endpoint for IDX reports (PyMuPDF ready, endpoint pending)
+- [x] Phase 4 — Evidently monitoring, Grafana dashboard, Telegram alerts, CI/CD
+- [x] Phase 5 — Adaptive retraining: trigger logic, state persistence, API control, emergency dispatch
+- [ ] HF Spaces deployment *(blocked: Ollama RAM > free tier limit)*
+- [ ] Larger LLM upgrade *(blocked: local hardware — 1-line config change when ready)*
+- [ ] PDF upload endpoint for IDX financial reports *(PyMuPDF foundation ready)*
 
 ---
 
@@ -324,3 +396,9 @@ This project is a **research and portfolio project**. The signals generated are 
 
 **Rafli Opticinn**  
 Built with ❤️ and way too much debugging — April 2026
+
+---
+
+<div align="center">
+  <sub>If you find this project useful, consider giving it a ⭐</sub>
+</div>

@@ -137,9 +137,7 @@ jobs:
     name: 🤖 Adaptive Retrain
     runs-on: ubuntu-latest
     needs: monitor
-    if: |
-      needs.monitor.outputs.should_retrain == 'true' ||
-      github.event.inputs.force_retrain == 'true'
+    if: false
 
     steps:
       - uses: actions/checkout@v4

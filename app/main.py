@@ -6,6 +6,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.core.database import engine, Base
 from app.core.limiter import limiter
+from app.api import retrain
 
 # ── Models ──
 from app.models import stock, user, prediction, conversation
@@ -47,6 +48,7 @@ app.include_router(stocks.router)
 app.include_router(ml.router)
 app.include_router(rag.router)
 app.include_router(websocket.router)
+app.include_router(retrain.router)
 
 @app.get("/chat", response_class=HTMLResponse, tags=["UI"])
 async def get_chat_ui():

@@ -12,7 +12,7 @@ from app.services.predictor import predict_ticker
 
 logger = logging.getLogger(__name__)
 
-llm = OllamaLLM(model="llama3.2", temperature=0.3)
+llm = OllamaLLM(model="qwen2.5:14b", temperature=0.3)
 
 # ─────────────────────────────────────────────
 # PROMPT — dirancang untuk output natural, bukan bocor instruksi

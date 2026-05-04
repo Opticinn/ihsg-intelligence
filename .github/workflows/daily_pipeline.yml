@@ -193,3 +193,18 @@ jobs:
           echo "Retrain Job  : ${{ needs.retrain.result }}"
           echo "Run ID       : ${{ github.run_id }}"
           echo "=================================================="
+
+
+      - name: Send Telegram Notification
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="Markdown" \
+            -d text="📊 *IHSG Daily Pipeline*
+          drift: ${{ needs.monitor.outputs.drift_share }}
+          akurasi: ${{ needs.monitor.outputs.model_acc }}
+          retrain: ${{ needs.monitor.outputs.should_retrain }}
+          run: ${{ github.run_id }}"

@@ -8,7 +8,6 @@
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.x-orange?style=flat-square)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_DB-purple?style=flat-square)
 ![Qwen](https://img.shields.io/badge/Qwen_2.5-Local-red?style=flat-square)
-Qwen 2.5 running 100% locally via Ollama (upgraded from Llama 3.2)
 ![Evidently](https://img.shields.io/badge/Evidently_AI-Monitoring-yellow?style=flat-square)
 ![Grafana](https://img.shields.io/badge/Grafana-Dashboard-orange?style=flat-square&logo=grafana)
 ![Telegram](https://img.shields.io/badge/Telegram-Alerts-blue?style=flat-square&logo=telegram)

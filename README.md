@@ -1,4 +1,4 @@
-# 🧠💵📈 IHSG Intelligence Platform
+<img width="480" height="755" alt="image" src="https://github.com/user-attachments/assets/6ad523d0-da3f-4e02-bb53-2d9b55cea493" /># 🧠💵📈 IHSG Intelligence Platform
 
 > **An end-to-end MLOps + RAG system for Indonesian Stock Exchange (IHSG) short-term signal prediction**  
 > Built with Zero-Dollar Architecture — no cloud fees, no paid APIs.
@@ -39,9 +39,6 @@
     </td>
   </tr>
 </table>
-
-> 📁 Place your screenshots in `docs/screenshots/` folder.  
-> Recommended: `chat_ui.png`, `grafana_dashboard.png`, `swagger_ui.png`, `telegram_alert.png`
 
 ---
 

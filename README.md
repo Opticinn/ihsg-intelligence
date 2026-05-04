@@ -1,4 +1,4 @@
-<img width="480" height="755" alt="image" src="https://github.com/user-attachments/assets/6ad523d0-da3f-4e02-bb53-2d9b55cea493" /># 🧠💵📈 IHSG Intelligence Platform
+# 🧠💵📈 IHSG Intelligence Platform
 
 > **An end-to-end MLOps + RAG system for Indonesian Stock Exchange (IHSG) short-term signal prediction**  
 > Built with Zero-Dollar Architecture — no cloud fees, no paid APIs.
@@ -20,21 +20,21 @@
 <table>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/chat_ui.png" alt="Chat Interface" width="400"/>
+      <img width="480" height="755" alt="image" src="https://github.com/user-attachments/assets/150cce67-0cf6-4465-bdec-c562d6a9970f" />
       <br/><sub><b>AI Chat Interface</b></sub>
     </td>
     <td align="center">
-      <img src="docs/screenshots/grafana_dashboard.png" alt="Grafana Dashboard" width="400"/>
+      <img width="480" height="238" alt="image" src="https://github.com/user-attachments/assets/7cdb655b-a793-495d-9421-0f83c977f595" />
       <br/><sub><b>Grafana MLOps Dashboard</b></sub>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/swagger_ui.png" alt="Swagger API" width="400"/>
+      <img width="1280" height="849" alt="image" src="https://github.com/user-attachments/assets/2323c27e-609f-4900-bab2-7e2ef67639e8" />
       <br/><sub><b>REST API — Swagger UI</b></sub>
     </td>
     <td align="center">
-      <img src="docs/screenshots/telegram_alert.png" alt="Telegram Alert" width="400"/>
+      <img width="480" height="1068" alt="image" src="https://github.com/user-attachments/assets/bafbd69b-5574-426b-98b2-d2ca2d79bb7f" />
       <br/><sub><b>Telegram Signal Alert</b></sub>
     </td>
   </tr>
